@@ -245,7 +245,35 @@ async fn shutdown_signal() {
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
 }
 
+/// Times every request: a `Server-Timing` header for devtools and an optional access log line.
 async fn handle(State(server): State<Server>, req: Request) -> Response {
+    let started = Instant::now();
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let log = server.inner.live.is_some()
+        || matches!(&*server.inner.current.read().unwrap(), Current::Ready(app) if app.project.config.server.access_log);
+    let mut response = route(server, req).await;
+    let elapsed = started.elapsed();
+    if let Ok(v) = HeaderValue::from_str(&format!("app;dur={:.1}", elapsed.as_secs_f64() * 1000.0)) {
+        response.headers_mut().insert("server-timing", v);
+    }
+    if log && !path.starts_with("/_forge/live") {
+        let status = response.status().as_u16();
+        let color = match status {
+            500.. => "31",
+            400.. => "33",
+            300.. => "36",
+            _ => "32",
+        };
+        println!(
+            "  \x1b[2m{method:<6}\x1b[0m {path} \x1b[{color}m{status}\x1b[0m \x1b[2m{:.1}ms\x1b[0m",
+            elapsed.as_secs_f64() * 1000.0
+        );
+    }
+    response
+}
+
+async fn route(server: Server, req: Request) -> Response {
     let path = req.uri().path().to_string();
     let dev = server.inner.live.is_some();
     match path.as_str() {

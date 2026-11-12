@@ -127,6 +127,8 @@ pub struct ServerConfig {
     pub cpu_ms: u64,
     pub max_body_bytes: usize,
     pub page_cache_entries: usize,
+    /// One line per request on stdout (always on in `forge dev`).
+    pub access_log: bool,
 }
 
 impl Default for ServerConfig {
@@ -142,6 +144,7 @@ impl Default for ServerConfig {
             cpu_ms: 2_000,
             max_body_bytes: 1 << 20,
             page_cache_entries: 1024,
+            access_log: false,
         }
     }
 }
