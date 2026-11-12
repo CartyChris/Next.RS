@@ -12,6 +12,7 @@ const env = new Proxy({}, { get: (_, key) => (typeof key === "string" ? host.env
 
 export function createServer({ routes, apis, notFound, renderers, dev }) {
   const pages = new Map(routes.map((r) => [r.id, r]));
+  if (notFound) pages.set(notFound.id, notFound);
   const apiById = new Map(apis.map((a) => [a.id, a]));
   renderers = {
     vanilla: async (state) => (await state.mod.page.render?.({ params: state.params, data: state.data, pathname: state.pathname })) ?? "",
@@ -45,21 +46,23 @@ export function createServer({ routes, apis, notFound, renderers, dev }) {
       if (!notFound) return out.head({ status: 404, builtin: "not-found" });
       [route, status, params, res] = [notFound, 404, {}, { data: null }];
     }
+    const ssr = !!route.mod;
+    const boot = scriptJson({ schemaVersion: 1, route: route.id, params, data: res.data, pathname: req.pathname, ssr });
+    if (!ssr) return out.head({ status, page: { meta: {}, boot, route: route.id, ssr } });
     const state = { route: route.id, kind: route.kind, params, data: res.data, pathname: req.pathname, search: "", mod: route.mod };
-    const boot = scriptJson({ schemaVersion: 1, route: route.id, params, data: res.data });
     const meta = resolveMeta([...route.mod.layouts, route.mod.page], state);
     // Render the shell first: if it throws we can still answer with a clean 500.
     const body = await renderers[route.kind](state, { nonce: req.nonce, stream: req.stream });
-    out.head({ status, page: { meta, boot } });
-    if (typeof body === "string") out.write(body);
-    else for await (const chunk of body) out.write(chunk);
+    out.head({ status, page: { meta, boot, route: route.id, ssr } });
+    if (typeof body === "string") await out.write(body);
+    else for await (const chunk of body) await out.write(chunk);
   }
 
   async function data(req, out) {
     const res = await load(pages.get(req.route), req);
     const payload = res.redirect ? { redirect: res.redirect } : res.notFound ? { notFound: true } : { data: res.data };
     out.head({ status: 200, headers: [["content-type", "application/json; charset=utf-8"]] });
-    out.write(JSON.stringify(payload));
+    await out.write(JSON.stringify(payload));
   }
 
   async function api(req, out, body) {
@@ -76,16 +79,16 @@ export function createServer({ routes, apis, notFound, renderers, dev }) {
     out.head({ status: res.status, headers: [...res.headers] });
     const b = res._body;
     if (b == null) return;
-    if (typeof b === "string" || b instanceof Uint8Array) out.write(b);
+    if (typeof b === "string" || b instanceof Uint8Array) await out.write(b);
     else if (b._handle != null && !b._locked) out.pipe(b._handle); // untouched upstream body: Rust streams it directly
-    else for await (const chunk of b) out.write(chunk);
+    else for await (const chunk of b) await out.write(chunk);
   }
 
   // Prerender support: the concrete params a dynamic route should be built for.
   async function paths(req, out) {
     const list = (await pages.get(req.route)?.loader?.staticParams?.()) ?? [];
     out.head({ status: 200, headers: [["content-type", "application/json"]] });
-    out.write(JSON.stringify(list));
+    await out.write(JSON.stringify(list));
   }
 
   const kinds = { page, data, api, paths };
@@ -94,7 +97,12 @@ export function createServer({ routes, apis, notFound, renderers, dev }) {
     let sent = false;
     const out = {
       head: (o) => ((sent = true), host.head(id, JSON.stringify(o))),
-      write: (chunk) => host.write(id, chunk),
+      // Resolves when the client can take more; throws if it went away (stops rendering).
+      async write(chunk) {
+        const r = host.write(id, chunk);
+        if (r === 2) throw Object.assign(new Error("client disconnected"), { __forge: "closed" });
+        if (r === 1) await host.op((o) => host.drain(o, id));
+      },
       pipe: (handle) => host.pipe(id, handle),
     };
     (async () => {
@@ -102,11 +110,12 @@ export function createServer({ routes, apis, notFound, renderers, dev }) {
         const req = JSON.parse(json);
         await kinds[req.kind](req, out, body);
       } catch (e) {
+        if (e?.__forge === "closed") return;
         console.error(e);
         if (!sent) {
           const detail = dev ? `${e?.name ?? "Error"}: ${e?.message ?? e}\n${e?.stack ?? ""}` : "Internal Server Error";
           out.head({ status: 500, headers: [["content-type", "text/html; charset=utf-8"]] });
-          out.write(`<!doctype html><title>Server error</title><pre>${escapeHtml(detail)}</pre>`);
+          await out.write(`<!doctype html><title>Server error</title><pre>${escapeHtml(detail)}</pre>`).catch(() => {});
         }
       } finally {
         host.end(id);

@@ -223,12 +223,42 @@ impl Project {
     pub fn generated_dir(&self) -> PathBuf {
         self.out_dir().join("generated")
     }
+    /// The variables listed in `server.env`, from the process environment or else `.env`.
+    pub fn server_env(&self) -> std::collections::HashMap<String, String> {
+        let file = std::fs::read_to_string(self.root.join(".env")).map(|t| parse_dotenv(&t)).unwrap_or_default();
+        self.config
+            .server
+            .env
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().or_else(|| file.get(k).cloned()).map(|v| (k.clone(), v)))
+            .collect()
+    }
+
     pub fn minify(&self) -> bool {
         self.config.build.minify.unwrap_or(!self.mode.is_dev())
     }
     pub fn sourcemap(&self) -> bool {
         self.config.build.sourcemap.unwrap_or(self.mode.is_dev()) && self.target == Target::Server
     }
+}
+
+/// `KEY=value` lines; `#` comments, optional `export `, optional matching quotes.
+pub fn parse_dotenv(text: &str) -> std::collections::HashMap<String, String> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (k, v) = line.strip_prefix("export ").unwrap_or(line).split_once('=')?;
+            let v = v.trim();
+            let v = match (v.chars().next(), v.chars().last()) {
+                (Some(q @ ('"' | '\'')), Some(e)) if q == e && v.len() >= 2 => &v[1..v.len() - 1],
+                _ => v.split(" #").next().unwrap_or(v).trim(),
+            };
+            Some((k.trim().to_string(), v.to_string()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -255,6 +285,16 @@ mod tests {
         assert!(matches!(c.security.csp, Some(Csp::Enabled(false))));
         let c: Config = serde_json::from_str(r#"{"security":{"csp":"default-src 'none'"}}"#).unwrap();
         assert!(matches!(c.security.csp, Some(Csp::Custom(_))));
+    }
+
+    #[test]
+    fn dotenv() {
+        let env = parse_dotenv("# c\nA=1\nexport B=\"two words\"\nC='x' \nD=y # note\nbad line\n");
+        assert_eq!(env["A"], "1");
+        assert_eq!(env["B"], "two words");
+        assert_eq!(env["C"], "x");
+        assert_eq!(env["D"], "y");
+        assert_eq!(env.len(), 4);
     }
 
     #[test]

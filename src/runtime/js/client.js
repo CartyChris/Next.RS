@@ -245,8 +245,11 @@ export async function start(config) {
     boot = JSON.parse(document.getElementById(DATA_ID)?.textContent || "null");
   } catch {}
   const route = boot?.route && (routes.find((r) => r.id === boot.route) ?? (notFoundRoute?.id === boot.route ? notFoundRoute : null));
-  if (!route) return go(rt.mode === "hash" ? location.hash || "/" : location.pathname + location.search, { history: false, scroll: false });
-  const mod = await route.load();
   const loc = here();
-  render({ route: route.id, kind: route.kind, params: boot.params ?? {}, data: boot.data ?? null, pathname: loc.pathname, search: loc.search, mod }, true);
+  // No boot state, or (hash mode) the document was prerendered for another path: resolve like a navigation.
+  if (!route || (boot.pathname && boot.pathname !== loc.pathname)) {
+    return go(rt.mode === "hash" ? loc.pathname + loc.search : location.pathname + location.search, { history: false, scroll: false });
+  }
+  const mod = await route.load();
+  render({ route: route.id, kind: route.kind, params: boot.params ?? {}, data: boot.data ?? null, pathname: loc.pathname, search: loc.search, mod }, boot.ssr !== false);
 }
