@@ -1,0 +1,6 @@
+{
+  "title": "Orb Runner",
+  "build": {
+    "compress": true
+  }
+}

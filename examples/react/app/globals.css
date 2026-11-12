@@ -1,0 +1,11 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  --accent: #e8590c;
+}
+body { margin: 0; }
+header { display: flex; gap: 1rem; padding: 1rem 2rem; border-bottom: 1px solid #8884; }
+header a { color: inherit; text-decoration: none; }
+header a:hover { color: var(--accent); }
+main { max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+button { font: inherit; padding: 0.4rem 1rem; cursor: pointer; }

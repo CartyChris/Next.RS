@@ -13,11 +13,33 @@ macro_rules! files {
 
 type Files = &'static [(&'static str, &'static str)];
 
-pub const TEMPLATES: &[(&str, &str, Files)] = &[(
-    "vanilla",
-    "no framework, no dependencies: render() + mount()",
-    files!("vanilla": "package.json", "forge.config.json", "app/styles.css", "app/page.js", "app/about/page.js", "app/notes/[id]/page.js", "app/notes/[id]/loader.js", "app/not-found.js", "app/api/time/route.js", "app/_lib/notes.js"),
-)];
+pub const TEMPLATES: &[(&str, &str, Files)] = &[
+    (
+        "react",
+        "React + TypeScript: layouts, loaders, streaming SSR, API route",
+        files!("react": "package.json", "forge.config.json", "tsconfig.json", "app/globals.css", "app/layout.tsx", "app/page.tsx", "app/_lib/posts.ts", "app/blog/loader.ts", "app/blog/page.tsx", "app/blog/[slug]/loader.ts", "app/blog/[slug]/page.tsx", "app/slow/page.tsx", "app/not-found.tsx", "app/api/hello/route.ts"),
+    ),
+    (
+        "jsx",
+        "React with plain JSX, persistent state, ships as one HTML file",
+        files!("jsx": "package.json", "forge.config.json", "app/styles.css", "app/page.jsx"),
+    ),
+    (
+        "vanilla",
+        "no framework, no dependencies: render() + mount()",
+        files!("vanilla": "package.json", "forge.config.json", "app/styles.css", "app/page.js", "app/about/page.js", "app/notes/[id]/page.js", "app/notes/[id]/loader.js", "app/not-found.js", "app/api/time/route.js", "app/_lib/notes.js"),
+    ),
+    (
+        "three",
+        "three.js game: fixed-step loop, input, GLSL imports, single HTML file",
+        files!("three-game": "package.json", "forge.config.json", "app/game.css", "app/orb.frag", "app/orb.vert", "app/page.js"),
+    ),
+    (
+        "ai",
+        "streaming AI chat: OpenAI-compatible proxy (or offline echo) + React UI",
+        files!("ai-chat": "package.json", "forge.config.json", "tsconfig.json", "app/chat.css", "app/page.tsx", "app/api/chat/route.ts"),
+    ),
+];
 
 const GITIGNORE: &str = "node_modules\n.forge\ndist\n.env\n";
 
@@ -36,4 +58,24 @@ pub fn create(dir: &Path, template: &str) -> Result<()> {
     }
     std::fs::write(dir.join(".gitignore"), GITIGNORE)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_template_scaffolds_a_valid_route_table() {
+        for (name, _, _) in TEMPLATES {
+            let dir = std::env::temp_dir().join(format!("forge-new-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            create(&dir, name).unwrap();
+            let project = crate::config::Project::load(&dir, crate::config::Target::Server, crate::config::Mode::Prod).unwrap();
+            let plan = crate::build::plan(&project).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+            assert!(!plan.routes.is_empty(), "{name}");
+            assert!(create(&dir, name).is_err(), "refuses a non-empty directory");
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        assert!(create(Path::new("/nonexistent/x"), "nope").is_err());
+    }
 }
