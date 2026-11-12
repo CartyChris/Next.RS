@@ -75,6 +75,9 @@ pub struct RouteEntry {
     pub streaming: bool,
     #[serde(default)]
     pub loader: bool,
+    /// API route that accepts WebSocket upgrades (`export const socket`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub socket: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

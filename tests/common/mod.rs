@@ -79,6 +79,19 @@ pub async fn serve(root: &Path) -> Router {
     server.router()
 }
 
+/// Build for the server target and serve it on a loopback port. Returns `http://127.0.0.1:port`.
+pub async fn listen(root: &Path) -> String {
+    let result = build(root, Target::Server).await.unwrap_or_else(|e| panic!("build failed: {e:#}"));
+    let project = Project::load(root, Target::Server, Mode::Prod).unwrap();
+    let app = App::new(project, result.manifest, result.server_code).await.unwrap();
+    let server = Server::new(false);
+    server.set_app(app);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { server.serve_on(listener).await });
+    format!("http://{addr}")
+}
+
 pub struct Res {
     pub status: StatusCode,
     pub headers: HeaderMap,

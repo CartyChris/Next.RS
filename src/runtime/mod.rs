@@ -13,10 +13,12 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
+
+use std::hash::{Hash, Hasher};
 
 use anyhow::{Context as _, Result, anyhow};
 use bytes::Bytes;
@@ -50,6 +52,8 @@ pub struct Shared {
     pub http: reqwest::Client,
     /// Called with every key/tag passed to `invalidate()` (the server evicts cached pages).
     pub on_invalidate: Mutex<Option<InvalidateHook>>,
+    /// Open WebSockets and their topic subscriptions, across all workers.
+    pub sockets: Sockets,
 }
 
 impl Shared {
@@ -69,6 +73,7 @@ impl Shared {
             allow_fetch,
             dev,
             cache: Mutex::new(KvCache::default()),
+            sockets: Sockets::default(),
             on_invalidate: Mutex::new(None),
         }
     }
@@ -240,12 +245,20 @@ pub struct Body {
     rx: mpsc::UnboundedReceiver<Event>,
     queued: Arc<AtomicUsize>,
     drained: Arc<Notify>,
+    /// Dropping the body before the response ends aborts the request in JS.
+    guard: Option<AbortGuard>,
 }
 
 impl Body {
     pub async fn next(&mut self) -> Option<Bytes> {
         loop {
-            match self.rx.recv().await? {
+            let Some(event) = self.rx.recv().await else {
+                if let Some(g) = &mut self.guard {
+                    g.armed = false;
+                }
+                return None;
+            };
+            match event {
                 Event::Data(b) => {
                     self.queued.fetch_sub(b.len(), Ordering::AcqRel);
                     self.drained.notify_waiters();
@@ -276,10 +289,147 @@ pub struct Reply {
     pub body: Body,
 }
 
-pub(crate) struct Job {
-    pub(crate) request: String,
-    pub(crate) body: Option<Bytes>,
-    pub(crate) sink: Sink,
+pub(crate) enum Job {
+    Request {
+        id: u64,
+        request: String,
+        body: Option<Bytes>,
+        sink: Sink,
+    },
+    /// The client went away or the request timed out.
+    Abort(u64),
+    Socket(SocketJob),
+}
+
+pub(crate) enum SocketJob {
+    Open { sid: u64, request: String },
+    Message { sid: u64, data: WsData },
+    Close { sid: u64, code: u16, reason: String },
+}
+
+#[derive(Debug, Clone)]
+pub enum WsData {
+    Text(String),
+    Binary(Bytes),
+}
+
+#[derive(Debug)]
+pub enum WsOut {
+    Data(WsData),
+    Close(u16, String),
+}
+
+/// Outgoing messages a client may have queued before it counts as too slow and is disconnected.
+pub const SOCKET_QUEUE: usize = 1024;
+
+struct SocketEntry {
+    tx: mpsc::Sender<WsOut>,
+    worker: usize,
+    topics: HashSet<String>,
+}
+
+/// Every open WebSocket, so any worker (or any HTTP request) can reach any socket.
+#[derive(Default)]
+pub struct Sockets {
+    entries: Mutex<HashMap<u64, SocketEntry>>,
+    topics: Mutex<HashMap<String, HashSet<u64>>>,
+}
+
+impl Sockets {
+    pub fn register(&self, sid: u64, worker: usize, tx: mpsc::Sender<WsOut>) {
+        self.entries.lock().unwrap().insert(sid, SocketEntry { tx, worker, topics: HashSet::new() });
+    }
+
+    pub fn unregister(&self, sid: u64) {
+        let Some(entry) = self.entries.lock().unwrap().remove(&sid) else { return };
+        let mut topics = self.topics.lock().unwrap();
+        for t in entry.topics {
+            if let Some(set) = topics.get_mut(&t) {
+                set.remove(&sid);
+                if set.is_empty() {
+                    topics.remove(&t);
+                }
+            }
+        }
+    }
+
+    /// Queue a message. A client whose queue is full is too slow and gets disconnected.
+    pub fn send(&self, sid: u64, out: WsOut) -> bool {
+        let entries = self.entries.lock().unwrap();
+        let Some(entry) = entries.get(&sid) else { return false };
+        match entry.tx.try_send(out) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                let tx = entry.tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(WsOut::Close(1008, "client too slow".into())).await;
+                });
+                false
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn subscribe(&self, sid: u64, topic: &str) {
+        let mut entries = self.entries.lock().unwrap();
+        let Some(entry) = entries.get_mut(&sid) else { return };
+        entry.topics.insert(topic.to_string());
+        self.topics.lock().unwrap().entry(topic.to_string()).or_default().insert(sid);
+    }
+
+    pub fn unsubscribe(&self, sid: u64, topic: &str) {
+        if let Some(entry) = self.entries.lock().unwrap().get_mut(&sid) {
+            entry.topics.remove(topic);
+        }
+        let mut topics = self.topics.lock().unwrap();
+        if let Some(set) = topics.get_mut(topic) {
+            set.remove(&sid);
+            if set.is_empty() {
+                topics.remove(topic);
+            }
+        }
+    }
+
+    /// Send to every subscriber of `topic` (optionally except one). Returns how many were reached.
+    pub fn publish(&self, topic: &str, data: WsData, except: Option<u64>) -> usize {
+        let targets: Vec<u64> = match self.topics.lock().unwrap().get(topic) {
+            Some(set) => set.iter().copied().filter(|s| Some(*s) != except).collect(),
+            None => return 0,
+        };
+        targets.into_iter().filter(|sid| self.send(*sid, WsOut::Data(data.clone()))).count()
+    }
+
+    pub fn subscribers(&self, topic: &str) -> usize {
+        self.topics.lock().unwrap().get(topic).map_or(0, HashSet::len)
+    }
+
+    pub fn count(&self) -> usize {
+        self.entries.lock().unwrap().len()
+    }
+
+    /// Close every socket, or every socket owned by one worker.
+    pub fn close_all(&self, worker: Option<usize>, code: u16, reason: &str) {
+        for entry in self.entries.lock().unwrap().values() {
+            if worker.is_none_or(|w| w == entry.worker) {
+                let _ = entry.tx.try_send(WsOut::Close(code, reason.to_string()));
+            }
+        }
+    }
+}
+
+/// Aborts the request in JS if the response is dropped before it finished.
+struct AbortGuard {
+    tx: mpsc::UnboundedSender<Job>,
+    id: u64,
+    armed: bool,
+}
+
+impl Drop for AbortGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.tx.send(Job::Abort(self.id));
+        }
+    }
 }
 
 struct Worker {
@@ -290,6 +440,7 @@ struct Worker {
 pub struct Pool {
     workers: Vec<Worker>,
     pub shared: Arc<Shared>,
+    next_id: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -315,7 +466,8 @@ impl Pool {
     /// Start `workers` engines and wait until each has loaded the bundle.
     /// Fails with the bundle's top-level error if it cannot load.
     pub async fn start(shared: Arc<Shared>, workers: usize) -> Result<Self> {
-        let mut pool = Pool { workers: Vec::with_capacity(workers), shared: shared.clone() };
+        let mut pool =
+            Pool { workers: Vec::with_capacity(workers), shared: shared.clone(), next_id: AtomicU64::new(1) };
         let mut ready = Vec::new();
         for i in 0..workers.max(1) {
             let (tx, rx) = mpsc::unbounded_channel();
@@ -325,7 +477,7 @@ impl Pool {
             std::thread::Builder::new()
                 .name(format!("forge-js-{i}"))
                 .stack_size(16 << 20)
-                .spawn(move || host::run_worker(s, rx, f, ready_tx))
+                .spawn(move || host::run_worker(i, s, rx, f, ready_tx))
                 .context("spawning JS worker")?;
             pool.workers.push(Worker { tx, inflight });
             ready.push(ready_rx);
@@ -337,24 +489,47 @@ impl Pool {
     }
 
     /// Send one request (a JSON object understood by `runtime/server.js`) and wait for its head.
+    /// Dropping the returned future or the reply body before the response ends aborts the
+    /// request in JS (its `ctx.signal` fires).
     pub async fn dispatch(&self, request: String, body: Option<Bytes>) -> Result<Reply, DispatchError> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let queued = Arc::new(AtomicUsize::new(0));
         let drained = Arc::new(Notify::new());
         let sink = Sink { tx, queued: queued.clone(), drained: drained.clone() };
         let worker = self.workers.iter().min_by_key(|w| w.inflight.load(Ordering::Relaxed)).expect("pool has workers");
-        if worker.tx.send(Job { request, body, sink }).is_err() {
+        let id = self.next_id();
+        if worker.tx.send(Job::Request { id, request, body, sink }).is_err() {
             return Err(DispatchError::NoResponse);
         }
+        let mut guard = AbortGuard { tx: worker.tx.clone(), id, armed: true };
         let timeout = self.shared.limits.timeout;
         let head = match tokio::time::timeout(timeout, rx.recv()).await {
             Err(_) => return Err(DispatchError::Timeout(timeout)),
-            Ok(None) => return Err(DispatchError::NoResponse),
+            Ok(None) => {
+                guard.armed = false;
+                return Err(DispatchError::NoResponse);
+            }
             Ok(Some(Event::Head(h))) => h,
             Ok(Some(Event::Data(_))) => return Err(DispatchError::BadHead("body before head".into())),
         };
         let head: Head = serde_json::from_str(&head).map_err(|e| DispatchError::BadHead(e.to_string()))?;
-        Ok(Reply { head, body: Body { rx, queued, drained } })
+        Ok(Reply { head, body: Body { rx, queued, drained, guard: Some(guard) } })
+    }
+
+    pub fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// The worker that owns every socket for `key` (the URL path): same path, same worker,
+    /// so module-level state in a socket route is one consistent room.
+    pub fn socket_worker(&self, key: &str) -> usize {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        (h.finish() % self.workers.len() as u64) as usize
+    }
+
+    pub(crate) fn send_socket(&self, worker: usize, job: SocketJob) -> bool {
+        self.workers[worker].tx.send(Job::Socket(job)).is_ok()
     }
 
     pub fn len(&self) -> usize {

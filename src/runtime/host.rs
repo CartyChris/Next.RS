@@ -2,7 +2,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::{
         Arc,
@@ -17,7 +17,7 @@ use rquickjs::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-use super::{Event, Job, Shared, Sink};
+use super::{Event, Job, Shared, Sink, SocketJob, WsData, WsOut};
 
 pub const HOST_JS: &str = include_str!("js/host.js");
 
@@ -61,8 +61,11 @@ impl Clock {
 struct HostState {
     shared: Arc<Shared>,
     inflight: Arc<AtomicUsize>,
-    requests: RefCell<HashMap<u32, Sink>>,
-    next_request: Cell<u32>,
+    /// This worker's index in the pool (owns the sockets routed to it).
+    worker: usize,
+    requests: RefCell<HashMap<u64, Sink>>,
+    /// Async op ids JS gave up on (aborted fetches): their results are dropped.
+    cancelled: RefCell<HashSet<u64>>,
     #[cfg(feature = "fetch")]
     bodies: RefCell<HashMap<u32, reqwest::Response>>,
     #[cfg(feature = "fetch")]
@@ -75,12 +78,16 @@ impl HostState {
     fn complete(&self, id: f64, result: Result<OpValue, String>) {
         let _ = self.comp.send(Completion { id, result });
     }
-    fn sink(&self, req: u32) -> Option<Sink> {
-        self.requests.borrow().get(&req).cloned()
+    fn sink(&self, req: f64) -> Option<Sink> {
+        self.requests.borrow().get(&(req as u64)).cloned()
+    }
+    fn take_cancelled(&self, op: f64) -> bool {
+        self.cancelled.borrow_mut().remove(&(op as u64))
     }
 }
 
 pub(super) fn run_worker(
+    index: usize,
     shared: Arc<Shared>,
     jobs: mpsc::UnboundedReceiver<Job>,
     inflight: Arc<AtomicUsize>,
@@ -88,10 +95,11 @@ pub(super) fn run_worker(
 ) {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("worker event loop");
     let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, worker_loop(shared, jobs, inflight, ready));
+    local.block_on(&rt, worker_loop(index, shared, jobs, inflight, ready));
 }
 
 async fn worker_loop(
+    index: usize,
     shared: Arc<Shared>,
     mut jobs: mpsc::UnboundedReceiver<Job>,
     inflight: Arc<AtomicUsize>,
@@ -99,7 +107,7 @@ async fn worker_loop(
 ) {
     let mut ready = Some(ready);
     loop {
-        let mut engine = match Engine::new(shared.clone(), inflight.clone()).await {
+        let mut engine = match Engine::new(index, shared.clone(), inflight.clone()).await {
             Ok(engine) => {
                 if let Some(r) = ready.take() {
                     let _ = r.send(Ok(()));
@@ -137,11 +145,13 @@ impl Drop for Engine {
         // Pending responses on this engine end now (their clients see a 500 or a cut stream).
         let n = self.st.requests.borrow_mut().drain().count();
         self.st.inflight.fetch_sub(n, Ordering::AcqRel);
+        // Socket state lived in this engine; clients reconnect to the replacement.
+        self.st.shared.sockets.close_all(Some(self.st.worker), 1012, "worker restarted");
     }
 }
 
 impl Engine {
-    async fn new(shared: Arc<Shared>, inflight: Arc<AtomicUsize>) -> Result<Self, String> {
+    async fn new(worker: usize, shared: Arc<Shared>, inflight: Arc<AtomicUsize>) -> Result<Self, String> {
         let rt = Runtime::new().map_err(|e| e.to_string())?;
         if shared.limits.memory_bytes > 0 {
             rt.set_memory_limit(shared.limits.memory_bytes);
@@ -161,8 +171,9 @@ impl Engine {
         let st = Rc::new(HostState {
             shared: shared.clone(),
             inflight,
+            worker,
             requests: RefCell::new(HashMap::new()),
-            next_request: Cell::new(0),
+            cancelled: RefCell::new(HashSet::new()),
             #[cfg(feature = "fetch")]
             bodies: RefCell::new(HashMap::new()),
             #[cfg(feature = "fetch")]
@@ -256,19 +267,65 @@ impl Engine {
     }
 
     fn dispatch(&mut self, job: Job) -> Result<(), String> {
-        let id = self.st.next_request.get().wrapping_add(1);
-        self.st.next_request.set(id);
-        self.st.requests.borrow_mut().insert(id, job.sink);
+        match job {
+            Job::Request { id, request, body, sink } => self.request(id, request, body, sink),
+            Job::Abort(id) => {
+                if self.st.requests.borrow_mut().remove(&id).is_none() {
+                    return Ok(()); // already finished
+                }
+                self.st.inflight.fetch_sub(1, Ordering::AcqRel);
+                self.enter(|ctx, _| {
+                    let f: Function = ctx.globals().get("__forge_abort").map_err(|e| describe(&ctx, e))?;
+                    f.call::<_, ()>((id as f64,)).map_err(|e| describe(&ctx, e))
+                })
+            }
+            Job::Socket(job) => {
+                let (kind, sid) = match &job {
+                    SocketJob::Open { sid, .. } => ("open", *sid),
+                    SocketJob::Message { sid, .. } => ("message", *sid),
+                    SocketJob::Close { sid, .. } => ("close", *sid),
+                };
+                let result = self.enter(|ctx, _| {
+                    let f: Function = ctx.globals().get("__forge_socket").map_err(|e| describe(&ctx, e))?;
+                    let text = |s: &str| rquickjs::String::from_str(ctx.clone(), s).map(|s| s.into_value());
+                    let (a, b): (rquickjs::Result<Value>, rquickjs::Result<Value>) = match &job {
+                        SocketJob::Open { request, .. } => (text(request), Ok(Value::new_undefined(ctx.clone()))),
+                        SocketJob::Message { data: WsData::Text(t), .. } => {
+                            (text(t), Ok(Value::new_bool(ctx.clone(), false)))
+                        }
+                        SocketJob::Message { data: WsData::Binary(b), .. } => (
+                            TypedArray::<u8>::new(ctx.clone(), b.to_vec()).map(|a| a.into_value()),
+                            Ok(Value::new_bool(ctx.clone(), true)),
+                        ),
+                        SocketJob::Close { code, reason, .. } => {
+                            (Ok(Value::new_int(ctx.clone(), *code as i32)), text(reason))
+                        }
+                    };
+                    let (a, b) = (a.map_err(|e| describe(&ctx, e))?, b.map_err(|e| describe(&ctx, e))?);
+                    f.call::<_, ()>((kind, sid as f64, a, b)).map_err(|e| describe(&ctx, e))
+                });
+                match result {
+                    Err(e) if !self.clock.tripped.get() => {
+                        eprintln!("[forge] socket {kind} failed: {e}");
+                        self.st.shared.sockets.send(sid, WsOut::Close(1011, "server error".into()));
+                        Ok(())
+                    }
+                    other => other,
+                }
+            }
+        }
+    }
+
+    fn request(&mut self, id: u64, request: String, body: Option<Bytes>, sink: Sink) -> Result<(), String> {
+        self.st.requests.borrow_mut().insert(id, sink);
         self.st.inflight.fetch_add(1, Ordering::AcqRel);
-        let request = job.request;
-        let body = job.body;
         let result = self.enter(|ctx, _| {
             let f: Function = ctx.globals().get("__forge_dispatch").map_err(|e| describe(&ctx, e))?;
             let body: Value = match body {
                 Some(b) => TypedArray::<u8>::new(ctx.clone(), b.to_vec()).map_err(|e| describe(&ctx, e))?.into_value(),
                 None => Value::new_null(ctx.clone()),
             };
-            f.call::<_, ()>((id, request, body)).map_err(|e| describe(&ctx, e))
+            f.call::<_, ()>((id as f64, request, body)).map_err(|e| describe(&ctx, e))
         });
         if let Err(e) = &result {
             if !self.clock.tripped.get() {
@@ -460,12 +517,12 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<HostState>) -> rquickjs::Result<()> {
     let s = st.clone();
     host.set(
         "head",
-        Function::new(ctx.clone(), move |req: u32, json: String| s.sink(req).map_or(2, |k| k.send(Event::Head(json))))?,
+        Function::new(ctx.clone(), move |req: f64, json: String| s.sink(req).map_or(2, |k| k.send(Event::Head(json))))?,
     )?;
     let s = st.clone();
     host.set(
         "write",
-        Function::new(ctx.clone(), move |req: u32, chunk: Value<'js>| {
+        Function::new(ctx.clone(), move |req: f64, chunk: Value<'js>| {
             let Some(sink) = s.sink(req) else { return 2 };
             match bytes_of(&chunk) {
                 Some(b) => sink.send(Event::Data(Bytes::from(b))),
@@ -476,7 +533,7 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<HostState>) -> rquickjs::Result<()> {
     let s = st.clone();
     host.set(
         "drain",
-        Function::new(ctx.clone(), move |id: f64, req: u32| {
+        Function::new(ctx.clone(), move |id: f64, req: f64| {
             let s = s.clone();
             match s.sink(req) {
                 None => s.complete(id, Ok(OpValue::Unit)),
@@ -492,8 +549,8 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<HostState>) -> rquickjs::Result<()> {
     let s = st.clone();
     host.set(
         "end",
-        Function::new(ctx.clone(), move |req: u32| {
-            if s.requests.borrow_mut().remove(&req).is_some() {
+        Function::new(ctx.clone(), move |req: f64| {
+            if s.requests.borrow_mut().remove(&(req as u64)).is_some() {
                 s.inflight.fetch_sub(1, Ordering::AcqRel);
             }
         })?,
@@ -518,6 +575,56 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<HostState>) -> rquickjs::Result<()> {
             if let Some(hook) = s.shared.on_invalidate.lock().unwrap().as_ref() {
                 hook(&key);
             }
+        })?,
+    )?;
+
+    // ---- WebSockets and pub/sub ----
+    fn ws_data(v: &Value<'_>) -> Option<WsData> {
+        if let Some(s) = v.as_string() {
+            return s.to_string().ok().map(WsData::Text);
+        }
+        bytes_of(v).map(|b| WsData::Binary(Bytes::from(b)))
+    }
+    let s = st.clone();
+    host.set(
+        "wsSend",
+        Function::new(ctx.clone(), move |sid: f64, data: Value<'js>| match ws_data(&data) {
+            Some(d) => s.shared.sockets.send(sid as u64, WsOut::Data(d)),
+            None => false,
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "wsClose",
+        Function::new(ctx.clone(), move |sid: f64, code: f64, reason: String| {
+            s.shared.sockets.send(sid as u64, WsOut::Close(code as u16, reason))
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "subscribe",
+        Function::new(ctx.clone(), move |sid: f64, topic: String| s.shared.sockets.subscribe(sid as u64, &topic))?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "unsubscribe",
+        Function::new(ctx.clone(), move |sid: f64, topic: String| s.shared.sockets.unsubscribe(sid as u64, &topic))?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "publish",
+        Function::new(ctx.clone(), move |topic: String, data: Value<'js>, except: Value<'js>| {
+            let except = except.as_number().map(|n| n as u64);
+            ws_data(&data).map_or(0, |d| s.shared.sockets.publish(&topic, d, except))
+        })?,
+    )?;
+    let s = st.clone();
+    host.set("subscribers", Function::new(ctx.clone(), move |topic: String| s.shared.sockets.subscribers(&topic))?)?;
+    let s = st.clone();
+    host.set(
+        "cancel",
+        Function::new(ctx.clone(), move |op: f64| {
+            s.cancelled.borrow_mut().insert(op as u64);
         })?,
     )?;
 
@@ -599,6 +706,9 @@ fn install_fetch<'js>(ctx: &Ctx<'js>, host: &Object<'js>, st: &Rc<HostState>) ->
                             handle,
                             resp.url().as_str()
                         ]);
+                        if s.take_cancelled(id) {
+                            return;
+                        }
                         s.bodies.borrow_mut().insert(handle, resp);
                         s.complete(id, Ok(OpValue::Text(meta.to_string())));
                     }
@@ -641,7 +751,7 @@ fn install_fetch<'js>(ctx: &Ctx<'js>, host: &Object<'js>, st: &Rc<HostState>) ->
     let s = st.clone();
     host.set(
         "pipe",
-        Function::new(ctx.clone(), move |req: u32, handle: u32| {
+        Function::new(ctx.clone(), move |req: f64, handle: u32| {
             let (Some(sink), Some(mut resp)) = (s.sink(req), s.bodies.borrow_mut().remove(&handle)) else { return };
             tokio::task::spawn_local(async move {
                 while let Ok(Some(chunk)) = resp.chunk().await {

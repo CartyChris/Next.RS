@@ -12,6 +12,7 @@
 
 pub mod dev;
 mod files;
+mod socket;
 
 use std::{
     collections::HashMap,
@@ -174,8 +175,18 @@ impl Server {
 
     pub fn set_app(&self, app: App) {
         let id = app.manifest.build_id.clone();
-        *self.inner.current.write().unwrap() = Current::Ready(Arc::new(app));
+        let old = std::mem::replace(&mut *self.inner.current.write().unwrap(), Current::Ready(Arc::new(app)));
+        if let Current::Ready(old) = old {
+            // Sockets hold the old code; clients reconnect to the new build.
+            old.pool.shared.sockets.close_all(None, 1012, "server reloaded");
+        }
         self.announce(id);
+    }
+
+    fn close_sockets(&self) {
+        if let Current::Ready(app) = &*self.inner.current.read().unwrap() {
+            app.pool.shared.sockets.close_all(None, 1001, "server shutting down");
+        }
     }
 
     pub fn set_error(&self, message: String) {
@@ -209,7 +220,12 @@ impl Server {
     }
 
     pub async fn serve_on(&self, listener: tokio::net::TcpListener) -> Result<()> {
-        axum::serve(listener, self.router()).with_graceful_shutdown(shutdown_signal()).await?;
+        let me = self.clone();
+        let shutdown = async move {
+            shutdown_signal().await;
+            me.close_sockets();
+        };
+        axum::serve(listener, self.router()).with_graceful_shutdown(shutdown).await?;
         Ok(())
     }
 }
@@ -257,7 +273,13 @@ async fn handle(State(server): State<Server>, req: Request) -> Response {
         }
     };
     if path == "/health/ready" {
-        let body = serde_json::json!({ "ok": true, "buildId": app.manifest.build_id, "workers": app.pool.len(), "inflight": app.pool.inflight() });
+        let body = serde_json::json!({
+            "ok": true,
+            "buildId": app.manifest.build_id,
+            "workers": app.pool.len(),
+            "inflight": app.pool.inflight(),
+            "sockets": app.pool.shared.sockets.count(),
+        });
         return json_response(StatusCode::OK, body.to_string().into(), None);
     }
     if let Some(rest) = path.strip_prefix(crate::build::bundle::STATIC_PREFIX) {
@@ -279,6 +301,9 @@ async fn handle(State(server): State<Server>, req: Request) -> Response {
     for route in &app.manifest.routes {
         if let Some(params) = routes::match_segments(&route.segments, &parts) {
             return match route.kind {
+                RouteKind::Api if route.socket && socket::is_upgrade(req.headers()) => {
+                    socket::upgrade(app.clone(), route, params, req).await
+                }
                 RouteKind::Api => api(&app, route, params, req).await,
                 RouteKind::Page if matches!(method, Method::GET | Method::HEAD) => {
                     page(&app, route, params, req.into_parts().0, dev).await
@@ -294,14 +319,14 @@ async fn handle(State(server): State<Server>, req: Request) -> Response {
     not_found(&app, req.into_parts().0, dev).await
 }
 
-fn request_url(uri: &Uri, headers: &HeaderMap) -> String {
+pub(crate) fn request_url(uri: &Uri, headers: &HeaderMap) -> String {
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
     let proto = headers.get("x-forwarded-proto").and_then(|h| h.to_str().ok()).unwrap_or("http");
     let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
     format!("{proto}://{host}{pq}")
 }
 
-fn header_list(headers: &HeaderMap) -> Vec<(String, String)> {
+pub(crate) fn header_list(headers: &HeaderMap) -> Vec<(String, String)> {
     headers.iter().filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str().to_string(), v.to_string()))).collect()
 }
 

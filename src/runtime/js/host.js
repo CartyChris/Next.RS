@@ -22,6 +22,14 @@
       pending.set(id, [resolve, reject]);
       start(id);
     });
+  // Give up on an in-flight op: its promise rejects now and Rust drops the late result.
+  const abortOp = (id, reason) => {
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    host.cancel(id);
+    p[1](reason);
+  };
   g.__forge_resolve = (id, ok, value) => {
     const p = pending.get(id);
     if (!p) return;
@@ -677,10 +685,24 @@
   const dropper = g.FinalizationRegistry ? new g.FinalizationRegistry((handle) => host.drop(handle)) : null;
   g.fetch = async (input, init = {}) => {
     const req = new Request(input, init);
-    req.signal?.throwIfAborted();
+    const signal = req.signal;
+    signal?.throwIfAborted();
     const body = req._body == null ? null : await collect(req._body);
     const meta = JSON.stringify({ url: new URL(req.url).href, method: req.method, headers: [...req.headers] });
-    const [status, statusText, headers, handle, url] = JSON.parse(await op((o) => host.fetch(o, meta, body)));
+    let opId;
+    const pendingResponse = op((o) => {
+      opId = o;
+      host.fetch(o, meta, body);
+    });
+    const onAbort = () => abortOp(opId, signal.reason);
+    signal?.addEventListener("abort", onAbort);
+    let parts;
+    try {
+      parts = JSON.parse(await pendingResponse);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
+    const [status, statusText, headers, handle, url] = parts;
     const stream = new ReadableStream({
       async pull(c) {
         const chunk = await op((o) => host.read(o, handle));
@@ -691,6 +713,7 @@
     });
     stream._handle = handle;
     dropper?.register(stream, handle);
+    signal?.addEventListener("abort", () => stream.cancel(signal.reason));
     const res = new Response(stream, { status, statusText, headers });
     res.url = url;
     return res;

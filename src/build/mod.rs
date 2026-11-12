@@ -121,6 +121,7 @@ impl Analyzer<'_> {
             revalidate: a.number("revalidate").filter(|n| *n > 0.0),
             streaming: !matches!(a.literals.get("streaming"), Some(Literal::Bool(false))),
             loader: loader.is_some(),
+            socket: false,
         };
         Ok((entry, info))
     }
@@ -147,8 +148,13 @@ pub fn plan(project: &Project) -> Result<Plan> {
             }
             RouteKind::Api => {
                 let a = an.get(&r.file)?;
-                if !HTTP_METHODS.iter().any(|m| a.has(m)) {
-                    bail!("{}: an API route must export at least one of {}", r.file, HTTP_METHODS.join(", "));
+                let socket = a.has("socket");
+                if !socket && !HTTP_METHODS.iter().any(|m| a.has(m)) {
+                    bail!(
+                        "{}: an API route must export at least one of {}, or `socket`",
+                        r.file,
+                        HTTP_METHODS.join(", ")
+                    );
                 }
                 entries.push(RouteEntry {
                     id: r.id.clone(),
@@ -161,6 +167,7 @@ pub fn plan(project: &Project) -> Result<Plan> {
                     revalidate: None,
                     streaming: false,
                     loader: false,
+                    socket,
                 });
             }
         }
