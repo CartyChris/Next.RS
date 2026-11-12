@@ -1,5 +1,7 @@
 # Next.RS
 
+*by [@CartyChris](https://github.com/CartyChris)*
+
 **A Rust-native React framework in one binary.** File-based routing, streaming SSR, server data loaders and API routes, like Next.js, with no Node.js at build time or at runtime. The same app builds three ways:
 
 ```bash
@@ -140,4 +142,4 @@ tests/               Rust integration tests and the browser smoke test
 
 ## License
 
-MIT
+MIT © [CartyChris](https://github.com/CartyChris)
