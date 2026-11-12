@@ -184,9 +184,46 @@ pub struct BuildConfig {
     /// Defaults to true in dev builds.
     pub sourcemap: Option<bool>,
     /// single-html: ship the script deflated and inflate it in the browser.
-    pub compress: bool,
+    /// `"auto"` (default) does so when it makes the file meaningfully smaller.
+    pub compress: Compress,
     /// Extra compile-time replacements, e.g. `{"__VERSION__": "\"1.2.3\""}`.
     pub define: BTreeMap<String, String>,
+}
+
+/// `build.compress`: `true`, `false` or `"auto"`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Compress {
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl Serialize for Compress {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Compress::Auto => s.serialize_str("auto"),
+            Compress::On => s.serialize_bool(true),
+            Compress::Off => s.serialize_bool(false),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Compress {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Str(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Bool(true) => Ok(Compress::On),
+            Raw::Bool(false) => Ok(Compress::Off),
+            Raw::Str(s) if s == "auto" => Ok(Compress::Auto),
+            Raw::Str(s) => Err(serde::de::Error::custom(format!("expected true, false or \"auto\", found {s:?}"))),
+        }
+    }
 }
 
 /// A resolved project: root directory + config + the knobs a single build needs.
@@ -288,6 +325,16 @@ mod tests {
         assert!(matches!(c.security.csp, Some(Csp::Enabled(false))));
         let c: Config = serde_json::from_str(r#"{"security":{"csp":"default-src 'none'"}}"#).unwrap();
         assert!(matches!(c.security.csp, Some(Csp::Custom(_))));
+    }
+
+    #[test]
+    fn compress_accepts_bool_or_auto() {
+        let parse = |j: &str| serde_json::from_str::<Config>(&format!(r#"{{"build":{{"compress":{j}}}}}"#));
+        assert_eq!(Config::default().build.compress, Compress::Auto);
+        assert_eq!(parse("true").unwrap().build.compress, Compress::On);
+        assert_eq!(parse("false").unwrap().build.compress, Compress::Off);
+        assert_eq!(parse(r#""auto""#).unwrap().build.compress, Compress::Auto);
+        assert!(parse(r#""yes""#).unwrap_err().to_string().contains("expected true, false or \"auto\""));
     }
 
     #[test]

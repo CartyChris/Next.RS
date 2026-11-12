@@ -284,7 +284,7 @@ forge build --target single-html   # dist/index.html: one self-contained file
 
 Single-html details:
 - The `/` route is prerendered into the file, so content shows before the script runs.
-- Set `"build": { "compress": true }` to ship the script deflated (typically 60–70% smaller) and inflate it with `DecompressionStream` on open.
+- The script is compressed automatically once it is over 16 kB (`"build": { "compress": "auto" }`, the default; `true` / `false` force it). It is deflated and stored as base-122 text (7 bits per byte, against base64's 6), then inflated with `DecompressionStream` and imported as the same ES module. The examples' files come out 64–71% smaller: React 235 → 85 kB, three.js game 504 → 145 kB, Forge Arena 802 → 257 kB.
 - `public/` is not included; import assets from code so they are inlined.
 - Dynamic `import()` of app code is not allowed (everything is one script).
 
@@ -343,7 +343,7 @@ Types are written to `.forge/types/forge.d.ts` on every build; include `.forge/t
   "build": {
     "minify": true,
     "sourcemap": false,
-    "compress": false,
+    "compress": "auto",
     "define": { "__VERSION__": "\"1.0.0\"" }
   }
 }

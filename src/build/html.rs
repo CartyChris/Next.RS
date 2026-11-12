@@ -2,10 +2,9 @@
 
 use std::fmt::Write as _;
 
-use base64::Engine as _;
 use serde_json::{Map, Value};
 
-use crate::config::{Csp, SecurityConfig};
+use crate::config::{Compress, Csp, SecurityConfig};
 
 pub const ROOT_ID: &str = "__forge_root";
 pub const DATA_ID: &str = "__FORGE_DATA__";
@@ -156,7 +155,84 @@ pub struct SingleFile<'a> {
     pub boot: &'a str,
     pub body: &'a str,
     /// Ship the script deflated and inflate it in the browser.
-    pub compress: bool,
+    pub compress: Compress,
+}
+
+/// `"auto"` compression applies from this script size, when it saves at least a quarter.
+/// Below it the readable inline script is worth more than a few kilobytes.
+const AUTO_COMPRESS_MIN: usize = 16 * 1024;
+
+/// Byte values that cannot appear raw in a JS string inside `<script>`: NUL and CR are
+/// rewritten by the HTML parser, LF / `"` / `\` end or escape the string, `<` could start
+/// `</script`. Everything else in 0x01..0x7f passes through both parsers unchanged.
+const B122_ILLEGAL: [u8; 6] = [0, b'\n', b'\r', b'"', b'\\', b'<'];
+
+/// Binary as text at 7 bits per byte (base64 manages 6). The input is cut into 7-bit groups;
+/// a legal group is one ASCII character, an illegal one is folded with the next group into a
+/// single two-byte UTF-8 character: code point `(illegal index + 1) << 7 | next group`.
+/// Decoding needs the byte length: trailing padding bits are dropped.
+pub fn base122(bytes: &[u8]) -> String {
+    let mut groups = Vec::with_capacity(bytes.len() * 8 / 7 + 2);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for &b in bytes {
+        acc = (acc << 8) | u32::from(b);
+        bits += 8;
+        while bits >= 7 {
+            bits -= 7;
+            groups.push(((acc >> bits) & 0x7f) as u8);
+        }
+        acc &= (1 << bits) - 1;
+    }
+    if bits > 0 {
+        groups.push(((acc << (7 - bits)) & 0x7f) as u8);
+    }
+    let mut out = String::with_capacity(groups.len() + groups.len() / 8);
+    let mut i = 0;
+    while i < groups.len() {
+        let g = groups[i];
+        match B122_ILLEGAL.iter().position(|&c| c == g) {
+            Some(k) => {
+                let next = groups.get(i + 1).copied().unwrap_or(0);
+                out.push(char::from_u32(((k as u32 + 1) << 7) | u32::from(next)).expect("below U+0400"));
+                i += 2;
+            }
+            None => {
+                out.push(char::from(g));
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// The inverse of `base122` in JS, as a statement that defines `b` (the bytes).
+fn base122_decoder(text: &str, len: usize) -> String {
+    format!(
+        r#"const s="{text}",I=[0,10,13,34,92,60],b=new Uint8Array({len});let a=0,k=0,j=0;const p=g=>{{a=(a<<7|g)&16383;if((k+=7)>7)b[j++]=a>>(k-=8)}};for(let i=0;i<s.length;i++){{const c=s.charCodeAt(i);c>127?(p(I[(c>>7)-1]),p(c&127)):p(c)}}"#
+    )
+}
+
+/// The module `<script>` element for a single-file app, and whether it is compressed.
+/// Compressed: deflate-raw, then `base122` text, inflated with `DecompressionStream` and
+/// imported from a blob URL, so the code runs as the same ES module it would be inline.
+pub fn single_file_script(js: &str, compress: Compress) -> (String, bool) {
+    let inline = || format!(r#"<script type="module">{}</script>"#, escape_inline_script(js));
+    let packed = || {
+        let bytes = deflate(js.as_bytes());
+        format!(
+            r#"<script type="module">{};await import(URL.createObjectURL(new Blob([await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob()],{{type:"text/javascript"}})));</script>"#,
+            base122_decoder(&base122(&bytes), bytes.len())
+        )
+    };
+    match compress {
+        Compress::Off => (inline(), false),
+        Compress::On => (packed(), true),
+        Compress::Auto if js.len() < AUTO_COMPRESS_MIN => (inline(), false),
+        Compress::Auto => {
+            let (plain, small) = (inline(), packed());
+            if small.len() * 4 <= plain.len() * 3 { (small, true) } else { (plain, false) }
+        }
+    }
 }
 
 impl SingleFile<'_> {
@@ -173,16 +249,7 @@ impl SingleFile<'_> {
         }
         let _ = write!(out, r#"<script type="application/json" id="{DATA_ID}">{}</script>"#, self.boot);
         let _ = write!(out, r#"</head><body><div id="{ROOT_ID}">{}</div>"#, self.body);
-        if self.compress {
-            let packed = deflate(self.js.as_bytes());
-            let b64 = base64::engine::general_purpose::STANDARD.encode(packed);
-            let _ = write!(
-                out,
-                r#"<script type="module">const b=Uint8Array.from(atob("{b64}"),c=>c.charCodeAt(0));const s=await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();await import(URL.createObjectURL(new Blob([s],{{type:"text/javascript"}})));</script>"#
-            );
-        } else {
-            let _ = write!(out, r#"<script type="module">{}</script>"#, escape_inline_script(self.js));
-        }
+        out.push_str(&single_file_script(self.js, self.compress).0);
         out.push_str("</body></html>");
         out
     }
@@ -261,13 +328,87 @@ mod tests {
             js: "console.log('</script>')",
             boot: "{}",
             body: "<main>hi</main>",
-            compress: false,
+            compress: Compress::Auto,
         }
         .render();
         assert!(html.contains("<style>body{color:red}</style>"));
         assert!(html.contains(r#"<div id="__forge_root"><main>hi</main></div>"#));
         assert!(html.contains(r"console.log('<\/script>')"));
         assert_eq!(html.matches("</script>").count(), 2);
+    }
+
+    /// The JS decoder, transcribed.
+    fn unbase122(s: &str, len: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(len);
+        let (mut a, mut k) = (0u32, 0u32);
+        let mut put = |g: u32| {
+            a = ((a << 7) | g) & 16383;
+            k += 7;
+            if k > 7 {
+                k -= 8;
+                if out.len() < len {
+                    out.push((a >> k) as u8);
+                }
+            }
+        };
+        for c in s.chars() {
+            let c = c as u32;
+            if c > 127 {
+                put(u32::from(B122_ILLEGAL[(c >> 7) as usize - 1]));
+                put(c & 127);
+            } else {
+                put(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn base122_round_trips_and_stays_script_safe() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut cases: Vec<Vec<u8>> = vec![vec![], vec![0], vec![0, 0], b"</script>".to_vec(), (0..=255).collect()];
+        for len in [1usize, 2, 6, 7, 8, 13, 100, 4096] {
+            cases.push(
+                (0..len)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        x as u8
+                    })
+                    .collect(),
+            );
+        }
+        for bytes in &cases {
+            let text = base122(bytes);
+            assert_eq!(unbase122(&text, bytes.len()), *bytes);
+            assert!(!text.chars().any(|c| matches!(c, '\0' | '\n' | '\r' | '"' | '\\' | '<')));
+            assert!(text.len() <= bytes.len() * 8 / 7 + 2, "{} > 8/7 of {}", text.len(), bytes.len());
+        }
+    }
+
+    #[test]
+    fn auto_compression_needs_size_and_savings() {
+        // Small scripts stay readable.
+        let small = "console.log(1);".repeat(100);
+        assert!(!single_file_script(&small, Compress::Auto).1);
+        assert!(single_file_script(&small, Compress::On).1);
+        // Large, repetitive code compresses well.
+        let big: String = (0..4000).map(|i| format!("export const v{i} = {{ id: {i}, label: \"item\" }};\n")).collect();
+        let (tag, packed) = single_file_script(&big, Compress::Auto);
+        assert!(packed && tag.len() * 3 < big.len(), "{} vs {}", tag.len(), big.len());
+        assert!(!single_file_script(&big, Compress::Off).1);
+        // Incompressible bytes do not pay for base64.
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let noise: String = (0..40_000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                char::from(b'!' + (x % 90) as u8)
+            })
+            .collect();
+        assert!(!single_file_script(&noise, Compress::Auto).1);
     }
 
     #[test]

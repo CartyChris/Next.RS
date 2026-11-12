@@ -101,8 +101,10 @@ try {
   check("react static: navigates with prebuilt data", p.url().endsWith("/blog/streaming"));
   check("react static: no console errors", p.errors.length === 0, JSON.stringify(p.errors));
 
-  // React, single file from file://.
+  // React, single file from file://. "auto" compression packs it (deflate + base-122).
   build("react", "single-html");
+  const html = await readFile(join(examples, "react/dist/index.html"), "utf8");
+  check("react single-html: compressed automatically", html.includes("DecompressionStream") && html.length < 120_000, String(html.length));
   p = await page(browser);
   const fileRequests = [];
   p.on("request", (r) => fileRequests.push(r.url()));
@@ -115,7 +117,7 @@ try {
   check("react single-html: hash navigation with embedded data", p.url().endsWith("#/blog/hello"));
   await p.goto(file + "#/blog/single-file");
   await p.waitForSelector("h1:text('One HTML file')");
-  check("react single-html: no network requests", fileRequests.every((u) => u.startsWith("file:")), fileRequests.join(","));
+  check("react single-html: no network requests", fileRequests.every((u) => /^(file|blob|data):/.test(u)), fileRequests.join(","));
   check("react single-html: no console errors", p.errors.length === 0, JSON.stringify(p.errors));
 
   // JSX clicker: persistent state across reloads.
