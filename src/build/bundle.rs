@@ -185,7 +185,14 @@ pub async fn bundle(spec: BundleSpec) -> Result<Bundle> {
         anyhow!("{}", e.iter().map(|d| clean_diagnostic(&d.to_string())).collect::<Vec<_>>().join("\n"))
     })?;
 
-    let mut out = Bundle { warnings: output.warnings.iter().map(|w| w.to_string()).collect(), ..Default::default() };
+    // An unresolved import would become an external import that fails at runtime: fail now.
+    let (unresolved, warnings): (Vec<String>, Vec<String>) =
+        output.warnings.iter().map(|w| w.to_string()).partition(|w| w.starts_with("Could not resolve"));
+    if !unresolved.is_empty() {
+        let lines: Vec<String> = unresolved.iter().map(|w| format!("  {}{}", w.trim(), node_hint(w))).collect();
+        bail!("unresolved imports (missing `npm install`?):\n{}", lines.join("\n"));
+    }
+    let mut out = Bundle { warnings, ..Default::default() };
     let mut maps: HashMap<String, String> = HashMap::new();
     for item in output.assets {
         match item {
@@ -239,6 +246,53 @@ pub async fn bundle(spec: BundleSpec) -> Result<Bundle> {
     Ok(out)
 }
 
+const NODE_BUILTINS: &[&str] = &[
+    "assert",
+    "async_hooks",
+    "buffer",
+    "child_process",
+    "cluster",
+    "crypto",
+    "dgram",
+    "dns",
+    "events",
+    "fs",
+    "fs/promises",
+    "http",
+    "http2",
+    "https",
+    "inspector",
+    "module",
+    "net",
+    "os",
+    "path",
+    "perf_hooks",
+    "process",
+    "querystring",
+    "readline",
+    "stream",
+    "string_decoder",
+    "timers",
+    "tls",
+    "tty",
+    "url",
+    "util",
+    "v8",
+    "vm",
+    "worker_threads",
+    "zlib",
+];
+
+fn node_hint(warning: &str) -> &'static str {
+    let spec = warning.split('\'').nth(1).unwrap_or_default();
+    let name = spec.strip_prefix("node:").unwrap_or(spec);
+    if spec.starts_with("node:") || NODE_BUILTINS.contains(&name) {
+        " (a Node.js built-in: Forge runs server code in an embedded engine with web APIs such as fetch, not Node)"
+    } else {
+        ""
+    }
+}
+
 /// Rolldown reports plugin errors as internal bugs with a debug dump; keep only our message.
 fn clean_diagnostic(msg: &str) -> String {
     let msg = msg.split("\n\nStack backtrace:").next().unwrap_or(msg);
@@ -269,6 +323,9 @@ mod tests {
         let raw = "Something went wrong inside rolldown, please report this problem at https://github.com/rolldown/rolldown/issues.\nplugin `forge` threw an error\n\nCaused by:\n    remote import `https://x` (in app/page.tsx) is denied\n\nStack backtrace:\n   0: foo";
         assert_eq!(clean_diagnostic(raw), "remote import `https://x` (in app/page.tsx) is denied");
         assert_eq!(clean_diagnostic("  [UNRESOLVED_IMPORT] x  "), "[UNRESOLVED_IMPORT] x");
+        assert!(node_hint("Could not resolve 'node:fs' in a.js").contains("Node.js built-in"));
+        assert!(node_hint("Could not resolve 'fs/promises' in a.js").contains("Node.js built-in"));
+        assert_eq!(node_hint("Could not resolve 'lodash' in a.js"), "");
     }
 }
 

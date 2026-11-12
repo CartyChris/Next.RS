@@ -105,6 +105,12 @@ async fn security_policy_is_enforced_at_build_time() {
         ),
         ("app/page.js", "import x from 'forge:nope';\nexport const render = () => x;", "unknown module `forge:nope`"),
         ("app/page.js", "export const x = 1;", "a page must default-export"),
+        (
+            "app/api/x/route.js",
+            "import { readFileSync } from 'fs';\nexport const GET = () => readFileSync('/x');",
+            "Node.js built-in",
+        ),
+        ("app/page.js", "import x from 'not-installed-pkg';\nexport const render = () => x;", "unresolved imports"),
         ("app/api/x/route.js", "export const handler = () => 1;", "must export at least one of GET"),
     ];
     for (file, source, expected) in cases {

@@ -539,7 +539,7 @@ async fn build_static(
             jobs.push((route.clone(), path, params));
         }
     }
-    let rendered: Vec<Result<Vec<(PathBuf, Vec<u8>)>>> = futures_util::stream::iter(jobs)
+    let rendered: Vec<Result<Files>> = futures_util::stream::iter(jobs)
         .map(|(route, path, params)| prerender_job(&pool, &manifest, &dist, route, path, params))
         .buffer_unordered(16)
         .collect()
@@ -573,6 +573,9 @@ async fn build_static(
         elapsed: Duration::ZERO,
     })
 }
+
+/// Output files: `(path, contents)`.
+type Files = Vec<(PathBuf, Vec<u8>)>;
 
 async fn prerender_job(
     pool: &Pool,

@@ -207,7 +207,7 @@ impl BundleStats {
                             )
                         })
                         .collect();
-                    modules.sort_by(|a, b| b.1.cmp(&a.1));
+                    modules.sort_by_key(|m| std::cmp::Reverse(m.1));
                     modules.truncate(12);
                     ChunkStats { file: c.file.clone(), bytes: c.code.len(), gzip: gzip_len(c.code.as_bytes()), modules }
                 })

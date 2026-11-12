@@ -1,0 +1,11 @@
+{
+  "name": "forge-browser-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node smoke.mjs ../../target/release/forge"
+  },
+  "devDependencies": {
+    "playwright": "^1.55.0"
+  }
+}
