@@ -21,6 +21,7 @@ use super::{Event, Job, Shared, Sink};
 
 pub const HOST_JS: &str = include_str!("js/host.js");
 
+#[cfg_attr(not(feature = "fetch"), allow(dead_code))]
 enum OpValue {
     Unit,
     Null,
@@ -64,6 +65,7 @@ struct HostState {
     next_request: Cell<u32>,
     #[cfg(feature = "fetch")]
     bodies: RefCell<HashMap<u32, reqwest::Response>>,
+    #[cfg(feature = "fetch")]
     next_handle: Cell<u32>,
     comp: mpsc::UnboundedSender<Completion>,
     started: Instant,
@@ -163,6 +165,7 @@ impl Engine {
             next_request: Cell::new(0),
             #[cfg(feature = "fetch")]
             bodies: RefCell::new(HashMap::new()),
+            #[cfg(feature = "fetch")]
             next_handle: Cell::new(0),
             comp,
             started: Instant::now(),

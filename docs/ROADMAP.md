@@ -30,13 +30,14 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 18. **Persistent build cache** (Rolldown incremental builds) to bring dev rebuilds of large apps under 100 ms.
 19. **Image pipeline.** Responsive sizes and modern formats at build time for imported images.
 20. **Dependency capability policy.** Per-package allow/deny rules from the bundle graph (e.g. forbid network or eval in specific packages).
-21. **Desktop shell.** Wrap a single-html or server build in a native window (Tauri/WebView) from `forge build --target desktop`.
+21. **Windows support.** CI runs on Linux; path handling in the bundler plugin and the file watcher are untested on Windows.
+22. **Desktop shell.** Wrap a single-html or server build in a native window (Tauri/WebView) from `forge build --target desktop`.
 
 ## Games
 
-22. **Asset manifest for games.** Glob imports (`import.meta.glob`) for levels/sprites/audio, with preload progress hooks.
-23. **WebSocket / WebTransport routes** for multiplayer and realtime AI.
-24. **WebGPU example** and a compute-shader template.
+23. **Asset manifest for games.** Glob imports (`import.meta.glob`) for levels/sprites/audio, with preload progress hooks.
+24. **WebSocket / WebTransport routes** for multiplayer and realtime AI.
+25. **WebGPU example** and a compute-shader template.
 
 ## Done (this repository)
 

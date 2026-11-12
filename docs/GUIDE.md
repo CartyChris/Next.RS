@@ -88,7 +88,7 @@ Optional page exports:
 |---|---|
 | `meta` | object or `({ params, data, pathname }) => object`: `title`, `description`, `themeColor`, `icon`, `image`, `robots`, `canonical` |
 | `ssr = false` | client-only page: the server never imports the module (safe for `window`, WebGL, three.js at module scope) |
-| `revalidate = <seconds>` | cache the rendered HTML and serve it stale-while-revalidate |
+| `revalidate = <seconds>` | cache the rendered HTML per URL and serve it stale-while-revalidate. Only for pages that look the same for every visitor (the cache ignores cookies); a cached copy keeps the CSP nonce it was rendered with |
 | `streaming = false` | wait for all Suspense boundaries before sending (default: stream) |
 | `Loading` | React component used as the Suspense fallback around the page |
 | `ErrorBoundary` | React component `({ error, reset })` shown if the page throws |
