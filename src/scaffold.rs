@@ -70,7 +70,8 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("forge-new-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             create(&dir, name).unwrap();
-            let project = crate::config::Project::load(&dir, crate::config::Target::Server, crate::config::Mode::Prod).unwrap();
+            let project =
+                crate::config::Project::load(&dir, crate::config::Target::Server, crate::config::Mode::Prod).unwrap();
             let plan = crate::build::plan(&project).unwrap_or_else(|e| panic!("{name}: {e:#}"));
             assert!(!plan.routes.is_empty(), "{name}");
             assert!(create(&dir, name).is_err(), "refuses a non-empty directory");

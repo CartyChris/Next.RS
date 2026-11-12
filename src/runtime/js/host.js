@@ -249,11 +249,13 @@
   }
   class URL {
     #p;
+    #ser; // serialization of the untouched query: the raw query is kept until searchParams changes
     constructor(input, base) {
       const p = host.url(String(input), base == null ? undefined : String(base));
       if (!p) throw new TypeError(`Invalid URL: ${input}`);
       this.#p = p;
       this.searchParams = new URLSearchParams(p[8]);
+      this.#ser = this.searchParams.toString();
     }
     static canParse(input, base) {
       return !!host.url(String(input), base == null ? undefined : String(base));
@@ -284,10 +286,14 @@
     }
     get search() {
       const s = this.searchParams.toString();
+      if (s === this.#ser) return this.#p[8] === "?" ? "" : this.#p[8];
       return s ? `?${s}` : "";
     }
     set search(v) {
-      this.searchParams = new URLSearchParams(String(v));
+      v = String(v);
+      this.#p[8] = v && !v.startsWith("?") ? `?${v}` : v;
+      this.searchParams = new URLSearchParams(v);
+      this.#ser = this.searchParams.toString();
     }
     get hash() {
       return this.#p[9];

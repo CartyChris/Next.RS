@@ -75,13 +75,29 @@ pub fn is_internal_specifier(spec: &str) -> bool {
     spec.starts_with("ext:") || spec.starts_with("forge:internal") || spec.contains(".forge/generated")
 }
 
+/// 1-based line and column (in characters) of a byte offset.
+fn line_col(source: &str, offset: usize) -> (usize, usize) {
+    let mut end = offset.min(source.len());
+    while !source.is_char_boundary(end) {
+        end -= 1;
+    }
+    let before = &source[..end];
+    let line = before.bytes().filter(|b| *b == b'\n').count() + 1;
+    let column = before.rfind('\n').map_or(before, |i| &before[i + 1..]).chars().count() + 1;
+    (line, column)
+}
+
 pub fn analyze(file: &str, source: &str, policy: Policy) -> Result<Analysis> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(Path::new(file)).unwrap_or_else(|_| SourceType::tsx());
     let parsed = Parser::new(&allocator, source, source_type).parse();
     if parsed.fatal_error || parsed.diagnostics.has_errors() {
-        let detail = parsed.diagnostics.errors().next().map(|e| e.to_string()).unwrap_or_else(|| "syntax error".into());
-        bail!("{file}: {detail}");
+        let Some(err) = parsed.diagnostics.errors().next() else { bail!("{file}: syntax error") };
+        let at = err.labels.first().map(|l| line_col(source, l.offset() as usize));
+        match at {
+            Some((line, col)) => bail!("{file}:{line}:{col}: {}", err.message),
+            None => bail!("{file}: {}", err.message),
+        }
     }
 
     let mut out = Analysis::default();
@@ -134,9 +150,7 @@ struct Scan<'s> {
 
 impl Scan<'_> {
     fn report(&mut self, span: Span, rule: Rule, message: String) {
-        let before = &self.source[..(span.start as usize).min(self.source.len())];
-        let line = before.bytes().filter(|b| *b == b'\n').count() + 1;
-        let column = before.rfind('\n').map_or(before.len(), |i| before.len() - i - 1) + 1;
+        let (line, column) = line_col(self.source, span.start as usize);
         self.out.push(Violation { file: self.file.to_string(), line, column, rule, message });
     }
 
@@ -306,7 +320,9 @@ mod tests {
     }
 
     #[test]
-    fn syntax_errors_are_reported() {
-        assert!(analyze("app/page.jsx", "export default function (", Policy::default()).is_err());
+    fn syntax_errors_are_reported_with_position() {
+        let e =
+            analyze("app/page.jsx", "const ok = 1;\nexport default function Home( {", Policy::default()).unwrap_err();
+        assert!(e.to_string().starts_with("app/page.jsx:2:"), "{e}");
     }
 }
