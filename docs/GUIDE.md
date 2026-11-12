@@ -334,7 +334,7 @@ forge pack demo.html --watch         # repack on save, serve it at :3000 with li
 - **`<script type="text/babel">`** is compiled ahead of time (JSX, optional TypeScript via `data-presets`), and the ~3 MB Babel runtime is dropped. Top-level declarations stay global, as with Babel.
 - **Assets**: images (`src`, `srcset`, posters), icons, `url()` in CSS and style attributes, `@import`ed sheets, web fonts (Google Fonts included), and string literals in page code that name a file next to the page or an absolute asset URL (`"textures/crate.png"`, `"https://…/model.glb"`, `new URL("./x.png", import.meta.url)`) become data URLs.
 - **Removed**: resource hints, `nomodule` fallbacks, and CSP `<meta>` tags (they would block the inlined code). `integrity` attributes are checked before inlining; a mismatch is an error.
-- **Safety**: only files inside the page's folder are read (no hidden files, nothing reached through symlinks or `..`). Package install scripts never run.
+- **Safety**: only files inside the page's folder are read (no hidden files, nothing reached through symlinks or `..`). Nothing is fetched from localhost or private networks, including cloud metadata at 169.254.169.254 and redirects that lead there, because a packed file is meant to be shared (`--allow-private-network` when you mean it; the configured registry is always allowed). Package install scripts never run.
 - The output always declares UTF-8 (pages without a charset are read as windows-1252 from disk); non-UTF-8 inputs are decoded with their declared charset.
 
 ### One component, one file

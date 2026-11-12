@@ -131,6 +131,8 @@ fn options(registry: &str, cache: &Path) -> pack::Options {
         cache_dir: cache.to_path_buf(),
         tailwind: None,
         title: None,
+        // The fake servers live on localhost.
+        allow_private_network: true,
     }
 }
 
@@ -311,6 +313,40 @@ async fn packs_a_component_file() {
     std::fs::remove_dir_all(&cache).ok();
     let err = pack::run(&dir.join("widget.js"), None, options(&base, &cache)).await.unwrap_err();
     assert!(format!("{err:#}").contains("no version of `mini3d` matches `^2`"), "{err:#}");
+    server.abort();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn private_networks_are_not_fetched_by_default() {
+    unsafe { std::env::set_var("NO_PROXY", "127.0.0.1,localhost") };
+    unsafe { std::env::set_var("no_proxy", "127.0.0.1,localhost") };
+    let (base, server) = servers().await;
+    // An untrusted page reaching for a local service and the cloud metadata endpoint.
+    let page = format!(
+        r#"<html><body><script src="{base}/web/lib.js"></script><img src="http://169.254.169.254/latest/meta-data/iam/x.png"><p>ok</p></body></html>"#
+    );
+    let dir = site("ssrf", &[("index.html", page.as_bytes())]);
+    let cache = dir.join("cache");
+    let mut strict = options("https://registry.npmjs.org", &cache);
+    strict.allow_private_network = false;
+    let summary = pack::run(&dir.join("index.html"), None, strict).await.unwrap();
+    let out = std::fs::read_to_string(&summary.output).unwrap();
+    assert!(!out.contains("remote-lib"), "a localhost script was embedded:\n{out}");
+    assert!(
+        out.contains(&format!(r#"src="{base}/web/lib.js""#)) && out.contains("169.254.169.254"),
+        "kept as links:\n{out}"
+    );
+    assert_eq!(
+        summary.warnings.iter().filter(|w| w.contains("--allow-private-network")).count(),
+        2,
+        "{:?}",
+        summary.warnings
+    );
+    // Allowed explicitly, the same page embeds the script.
+    let summary =
+        pack::run(&dir.join("index.html"), Some(&dir.join("open.html")), options(&base, &cache)).await.unwrap();
+    assert!(std::fs::read_to_string(summary.output).unwrap().contains("remote-lib"));
     server.abort();
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -43,6 +43,8 @@ pub struct Options {
     pub tailwind: Option<bool>,
     /// Component files: the page title (default: from the file name).
     pub title: Option<String>,
+    /// Fetch from loopback / private / link-local addresses (off: see `net`).
+    pub allow_private_network: bool,
 }
 
 impl Default for Options {
@@ -55,6 +57,7 @@ impl Default for Options {
             cache_dir: default_cache_dir(),
             tailwind: None,
             title: None,
+            allow_private_network: false,
         }
     }
 }
@@ -135,14 +138,22 @@ impl Packer {
         let ws = options.cache_dir.join("work").join(key);
         std::fs::create_dir_all(&ws).with_context(|| format!("creating {}", ws.display()))?;
         let ws = ws.canonicalize()?;
-        let client = net::client()?;
+        let guard = net::Guard {
+            allow_private: options.allow_private_network,
+            exempt: Url::parse(&options.registry)
+                .ok()
+                .and_then(|u| u.host_str().map(String::from))
+                .into_iter()
+                .collect(),
+        };
+        let client = net::client(&guard)?;
         let registry = Arc::new(npm::Registry::new(
             &options.registry,
             options.cache_dir.join("npm"),
             client.clone(),
             options.offline,
         ));
-        let http = net::Http::new(client, options.cache_dir.join("http"), options.offline);
+        let http = net::Http::new(client, options.cache_dir.join("http"), options.offline, guard);
         let mut deps = BTreeMap::new();
         if let Ok(text) = std::fs::read_to_string(dir.join("package.json")) {
             let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();

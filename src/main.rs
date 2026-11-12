@@ -102,6 +102,10 @@ enum Command {
         /// npm registry (default: $FORGE_NPM_REGISTRY, $npm_config_registry, or registry.npmjs.org).
         #[arg(long)]
         registry: Option<String>,
+        /// Allow fetching from localhost and private networks (off by default: a packed page
+        /// must not embed internal services or cloud metadata).
+        #[arg(long)]
+        allow_private_network: bool,
         /// Repack on every change and serve the result with live reload.
         #[arg(long, short)]
         watch: bool,
@@ -230,6 +234,7 @@ async fn run(cli: Cli) -> Result<()> {
             no_minify,
             offline,
             registry,
+            allow_private_network,
             watch,
             port,
         } => {
@@ -246,8 +251,15 @@ async fn run(cli: Cli) -> Result<()> {
             } else {
                 None
             };
-            let mut options =
-                nextrs::pack::Options { compress, minify: !no_minify, offline, tailwind, title, ..Default::default() };
+            let mut options = nextrs::pack::Options {
+                compress,
+                minify: !no_minify,
+                offline,
+                tailwind,
+                title,
+                allow_private_network,
+                ..Default::default()
+            };
             if let Some(r) = registry {
                 options.registry = r;
             }
