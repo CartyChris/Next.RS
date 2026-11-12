@@ -316,6 +316,27 @@ export default function Notes() {
 - `openFile` / `openFiles` (no `<input>` plumbing, `[]`/`null` on cancel), `saveFile(blob | string | bytes | json, name)`, `onDrop` / `useDrop` for drag-and-drop anywhere or on one element.
 - See `examples/pixel` (`forge new my-art --template pixel`): a pixel-art editor in one 90 kB file with image import by drop, PNG/JSON export and save-self.
 
+## Packing any page: `forge pack`
+
+`forge pack page.html` turns an existing HTML page (a CodePen export, a three.js demo, an AI-generated prototype) into one file that works offline, from `file://`, with zero network requests.
+
+```bash
+forge pack demo.html                 # → demo.packed.html
+forge pack demo.html -o dist/app.html --compress on
+forge pack demo.html --offline       # only the package and download caches
+```
+
+- **CDN URLs become npm packages.** unpkg, jsDelivr, esm.sh, Skypack, jspm and esm.run URLs are fetched from the npm registry (`FORGE_NPM_REGISTRY` or `--registry` to change it), verified against the registry's sha512 integrity, and cached in `~/.cache/forge` (`FORGE_CACHE_DIR`). A pinned file is that file; a package URL resolves like an import. Anything else is downloaded over HTTP.
+- **Module scripts and the import map** are bundled into one module (Rolldown, minified, tree-shaken, one copy of each package), compressed like single-html builds. Addons that import `"three"` get the same `three` as the page.
+- **Classic scripts and stylesheets** are inlined in place, and large ones are compressed and inflated synchronously where they stood, so script order and render-blocking CSS behave as before. `defer`/`async` scripts move to the end of `<body>`.
+- **`<script type="text/babel">`** is compiled ahead of time (JSX, optional TypeScript via `data-presets`), and the ~3 MB Babel runtime is dropped. Top-level declarations stay global, as with Babel.
+- **Assets**: images (`src`, `srcset`, posters), icons, `url()` in CSS and style attributes, `@import`ed sheets, web fonts (Google Fonts included), and string literals in page code that name a file next to the page or an absolute asset URL (`"textures/crate.png"`, `"https://…/model.glb"`, `new URL("./x.png", import.meta.url)`) become data URLs.
+- **Removed**: resource hints, `nomodule` fallbacks, and CSP `<meta>` tags (they would block the inlined code). `integrity` attributes are checked before inlining; a mismatch is an error.
+- **Safety**: only files inside the page's folder are read (no hidden files, nothing reached through symlinks or `..`). Package install scripts never run.
+- The output always declares UTF-8 (pages without a charset are read as windows-1252 from disk); non-UTF-8 inputs are decoded with their declared charset.
+
+Not handled yet: workers created from separate files, `text/babel` with `data-type="module"`, and assets whose URLs are built at runtime (`path + name + ".png"`); the command lists what it kept as links.
+
 ## Virtual modules
 
 | Module | Exports |

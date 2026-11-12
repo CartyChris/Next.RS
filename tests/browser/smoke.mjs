@@ -2,7 +2,7 @@
 // Usage: node smoke.mjs <path to forge binary>   (examples need `npm install` first)
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { readFile, mkdtemp } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, extname, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -238,6 +238,51 @@ try {
   await p.waitForFunction(() => document.querySelector("#count").textContent === "1024 px", null, { timeout: 5000 }).catch(() => {});
   check("pixel: a dropped image is imported onto the palette", (await pixels(p)) === "1024 px", await pixels(p));
   check("pixel: the copy has no errors (no hydration over stale markup)", !p.errors.length, JSON.stringify(p.errors));
+
+  // forge pack: CDN pages become one offline file. Packages come from the npm registry.
+  const fixtures = resolve(import.meta.dirname, "../fixtures/pack");
+  const packs = await mkdtemp(join(tmpdir(), "forge-pack-"));
+  const pack = (input, out) => execFileSync(forge, ["pack", input, "-o", out], { stdio: "pipe" });
+  // Every http(s) request fails, so anything not embedded breaks the page.
+  const offline = async (options) => {
+    const q = await page(browser, options);
+    q.blocked = [];
+    await q.route(/^https?:/, (r) => (q.blocked.push(r.request().url()), r.abort()));
+    return q;
+  };
+  pack(join(fixtures, "three/index.html"), join(packs, "three.html"));
+  p = await offline({ viewport: { width: 640, height: 480 } });
+  await p.goto("file://" + join(packs, "three.html"));
+  await p.waitForFunction(() => window.__frames > 10 && window.__textureLoaded, null, { timeout: 20000 }).catch(() => {});
+  check("pack three: renders with the embedded texture", await p.evaluate(() => window.__frames > 10 && window.__textureLoaded === true));
+  check("pack three: CSS @import and url() embedded", await p.evaluate(() => getComputedStyle(document.getElementById("hud")).position === "fixed" && getComputedStyle(document.body).backgroundImage.includes("data:image/svg+xml")));
+  check("pack three: no network, no errors", !p.blocked.length && !p.errors.length, JSON.stringify([p.blocked, p.errors]));
+
+  pack(join(fixtures, "babel/index.html"), join(packs, "babel.html"));
+  p = await offline();
+  await p.goto("file://" + join(packs, "babel.html"));
+  await p.click("#inc");
+  await p.click("#inc");
+  check("pack babel: JSX compiled ahead of time, React from npm", (await p.textContent("#root")) === "HelloClicked 2 times");
+  const babelHtml = await readFile(join(packs, "babel.html"), "utf8");
+  check("pack babel: the Babel runtime is gone", !babelHtml.includes("text/babel") && babelHtml.length < 100_000, String(babelHtml.length));
+  check("pack babel: no network, no errors", !p.blocked.length && !p.errors.length, JSON.stringify([p.blocked, p.errors]));
+
+  // Compressed classic scripts and styles still run in place, before the code after them.
+  const big = await mkdtemp(join(tmpdir(), "forge-pack-big-"));
+  await writeFile(join(big, "big.js"), Array.from({ length: 4000 }, (_, i) => `window.v${i} = ${i};`).join("\n"));
+  await writeFile(join(big, "big.css"), Array.from({ length: 4000 }, (_, i) => `.c${i} { margin-left: ${i}px }`).join("\n"));
+  await writeFile(
+    join(big, "index.html"),
+    `<html><head><link rel="stylesheet" href="big.css"></head><body><p class="c42" id="styled">x</p><script src="big.js"></script><script>window.after = window.v3999; window.styledEarly = getComputedStyle(document.getElementById("styled")).marginLeft;</script></body></html>`,
+  );
+  pack(join(big, "index.html"), join(big, "out.html"));
+  p = await offline();
+  await p.goto("file://" + join(big, "out.html"));
+  const packedSize = (await readFile(join(big, "out.html"))).length;
+  check("pack: big classic script and CSS compressed", packedSize < 60_000, String(packedSize));
+  check("pack: compressed script ran before the next script", (await p.evaluate(() => window.after)) === 3999);
+  check("pack: compressed CSS applied before scripts ran", (await p.evaluate(() => window.styledEarly)) === "42px");
 } catch (e) {
   failures.push(String(e?.stack ?? e));
   console.error(e);

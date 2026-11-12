@@ -68,6 +68,28 @@ enum Command {
         #[arg(default_value = ".")]
         root: PathBuf,
     },
+    /// Turn an HTML page into one offline file: CDN scripts come from npm (verified),
+    /// everything else is downloaded, and all of it is inlined and compressed.
+    #[cfg(feature = "pack")]
+    Pack {
+        /// The page (`.html`).
+        input: PathBuf,
+        /// Output file (default: `<name>.packed.html` next to the input).
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+        /// auto | on | off: compress large scripts and styles.
+        #[arg(long, default_value = "auto")]
+        compress: String,
+        /// Keep bundled module code unminified.
+        #[arg(long)]
+        no_minify: bool,
+        /// Use only the package and download caches.
+        #[arg(long)]
+        offline: bool,
+        /// npm registry (default: $FORGE_NPM_REGISTRY, $npm_config_registry, or registry.npmjs.org).
+        #[arg(long)]
+        registry: Option<String>,
+    },
 }
 
 fn addr(project: &Project, host: Option<String>, port: Option<u16>) -> Result<SocketAddr> {
@@ -171,6 +193,40 @@ async fn run(cli: Cli) -> Result<()> {
             server.set_app(app);
             println!("forge start → http://{addr} ({workers} JS workers)");
             server.serve(addr).await?;
+        }
+        #[cfg(feature = "pack")]
+        Command::Pack { input, output, compress, no_minify, offline, registry } => {
+            let compress = match compress.as_str() {
+                "auto" => nextrs::config::Compress::Auto,
+                "on" | "true" => nextrs::config::Compress::On,
+                "off" | "false" => nextrs::config::Compress::Off,
+                other => anyhow::bail!("--compress takes auto, on or off (got `{other}`)"),
+            };
+            let mut options = nextrs::pack::Options { compress, minify: !no_minify, offline, ..Default::default() };
+            if let Some(r) = registry {
+                options.registry = r;
+            }
+            let started = std::time::Instant::now();
+            let s = nextrs::pack::run(&input, output.as_deref(), options).await?;
+            for (what, from) in &s.sources {
+                println!("  {from:<12} {what}");
+            }
+            for p in &s.packages {
+                println!("  installed    {p}");
+            }
+            for n in &s.notes {
+                println!("  note: {n}");
+            }
+            for w in &s.warnings {
+                eprintln!("warn: {w}");
+            }
+            println!(
+                "→ {} ({}, from a {} page) in {} ms",
+                s.output.display(),
+                human(s.bytes as u64),
+                human(s.input_bytes as u64),
+                started.elapsed().as_millis()
+            );
         }
         Command::Check { root } => {
             let project = Project::load(&root, Target::Server, Mode::Prod)?;

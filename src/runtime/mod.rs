@@ -97,7 +97,8 @@ fn http_client(allow: Vec<String>) -> reqwest::Client {
             attempt.error(format!("redirect to `{host}` is not in server.allowFetch"))
         }
     });
-    reqwest::Client::builder().user_agent("forge").redirect(policy).build().expect("http client")
+    // App `fetch()` sees bodies exactly as served (no transparent decompression).
+    reqwest::Client::builder().user_agent("forge").redirect(policy).no_gzip().build().expect("http client")
 }
 
 fn host_allowed(allow: &[String], host: &str) -> bool {

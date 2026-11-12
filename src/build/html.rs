@@ -217,12 +217,13 @@ fn base122_decoder(text: &str, len: usize) -> String {
 /// The module `<script>` element for a single-file app, and whether it is compressed.
 /// Compressed: deflate-raw, then `base122` text, inflated with `DecompressionStream` and
 /// imported from a blob URL, so the code runs as the same ES module it would be inline.
-pub fn single_file_script(js: &str, compress: Compress) -> (String, bool) {
-    let inline = || format!(r#"<script type="module" id="{APP_SCRIPT_ID}">{}</script>"#, escape_inline_script(js));
+pub fn single_file_script(js: &str, compress: Compress, id: Option<&str>) -> (String, bool) {
+    let id = id.map(|i| format!(r#" id="{i}""#)).unwrap_or_default();
+    let inline = || format!(r#"<script type="module"{id}>{}</script>"#, escape_inline_script(js));
     let packed = || {
         let bytes = deflate(js.as_bytes());
         format!(
-            r#"<script type="module" id="{APP_SCRIPT_ID}">{};await import(URL.createObjectURL(new Blob([await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob()],{{type:"text/javascript"}})));</script>"#,
+            r#"<script type="module"{id}>{};await import(URL.createObjectURL(new Blob([await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob()],{{type:"text/javascript"}})));</script>"#,
             base122_decoder(&base122(&bytes), bytes.len())
         )
     };
@@ -251,13 +252,13 @@ impl SingleFile<'_> {
         }
         let _ = write!(out, r#"<script type="application/json" id="{DATA_ID}">{}</script>"#, self.boot);
         let _ = write!(out, r#"</head><body><div id="{ROOT_ID}">{}</div>"#, self.body);
-        out.push_str(&single_file_script(self.js, self.compress).0);
+        out.push_str(&single_file_script(self.js, self.compress, Some(APP_SCRIPT_ID)).0);
         out.push_str("</body></html>");
         out
     }
 }
 
-fn deflate(bytes: &[u8]) -> Vec<u8> {
+pub fn deflate(bytes: &[u8]) -> Vec<u8> {
     use std::io::Write;
     let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
     enc.write_all(bytes).expect("in-memory write");
@@ -393,13 +394,13 @@ mod tests {
     fn auto_compression_needs_size_and_savings() {
         // Small scripts stay readable.
         let small = "console.log(1);".repeat(100);
-        assert!(!single_file_script(&small, Compress::Auto).1);
-        assert!(single_file_script(&small, Compress::On).1);
+        assert!(!single_file_script(&small, Compress::Auto, None).1);
+        assert!(single_file_script(&small, Compress::On, None).1);
         // Large, repetitive code compresses well.
         let big: String = (0..4000).map(|i| format!("export const v{i} = {{ id: {i}, label: \"item\" }};\n")).collect();
-        let (tag, packed) = single_file_script(&big, Compress::Auto);
+        let (tag, packed) = single_file_script(&big, Compress::Auto, None);
         assert!(packed && tag.len() * 3 < big.len(), "{} vs {}", tag.len(), big.len());
-        assert!(!single_file_script(&big, Compress::Off).1);
+        assert!(!single_file_script(&big, Compress::Off, None).1);
         // Incompressible bytes do not pay for base64.
         let mut x = 0x2545_f491_4f6c_dd1du64;
         let noise: String = (0..40_000)
@@ -410,7 +411,7 @@ mod tests {
                 char::from(b'!' + (x % 90) as u8)
             })
             .collect();
-        assert!(!single_file_script(&noise, Compress::Auto).1);
+        assert!(!single_file_script(&noise, Compress::Auto, None).1);
     }
 
     #[test]

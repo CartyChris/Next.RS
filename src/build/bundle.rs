@@ -26,7 +26,7 @@ use super::analyze::{Policy, Violation, analyze, find_asset_urls, is_internal_sp
 pub const STATIC_PREFIX: &str = "/_forge/static/";
 
 /// Imported as a URL (or a data URL in single-file builds).
-const ASSET_EXTS: &[(&str, &str)] = &[
+pub const ASSET_EXTS: &[(&str, &str)] = &[
     ("png", "image/png"),
     ("jpg", "image/jpeg"),
     ("jpeg", "image/jpeg"),
@@ -59,7 +59,7 @@ const ASSET_EXTS: &[(&str, &str)] = &[
 ];
 
 /// Imported as a string: shaders, prompts, data.
-const TEXT_EXTS: &[&str] = &["glsl", "vert", "frag", "wgsl", "txt", "md", "csv", "prompt"];
+pub const TEXT_EXTS: &[&str] = &["glsl", "vert", "frag", "wgsl", "txt", "md", "csv", "prompt"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {

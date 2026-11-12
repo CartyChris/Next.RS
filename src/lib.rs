@@ -6,6 +6,8 @@
 
 pub mod build;
 pub mod config;
+#[cfg(feature = "pack")]
+pub mod pack;
 pub mod render;
 pub mod routes;
 pub mod runtime;
