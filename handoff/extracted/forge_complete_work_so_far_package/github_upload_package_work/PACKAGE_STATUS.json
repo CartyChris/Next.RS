@@ -1,0 +1,22 @@
+{
+  "package": "forge_8d_github_upload_package",
+  "generated_utc": "2026-11-12T00:19:34Z",
+  "non_rolldown_tests": {
+    "passed": 50,
+    "failed": 0,
+    "blocked": 2
+  },
+  "blocked": [
+    "cargo/rustc permission denied in sandbox",
+    "rolldown unavailable or permission denied in sandbox",
+    "real repository not mounted in sandbox"
+  ],
+  "recommended_next_steps": [
+    "unzip package into a GitHub branch/worktree",
+    "copy src/build modules into real repository",
+    "wire module declarations",
+    "run cargo fmt/check/test/clippy",
+    "run rolldown e2e build",
+    "open PR with reports attached"
+  ]
+}

@@ -1,0 +1,215 @@
+{
+  "passed": [
+    {
+      "name": "patch file exists: src/build/bundler.rs",
+      "detail": ""
+    },
+    {
+      "name": "patch file exists: src/build/rolldown.rs",
+      "detail": ""
+    },
+    {
+      "name": "patch file exists: src/build/generated.rs",
+      "detail": ""
+    },
+    {
+      "name": "patch file exists: src/build/manifest.rs",
+      "detail": ""
+    },
+    {
+      "name": "patch file exists: src/build/security_scan.rs",
+      "detail": ""
+    },
+    {
+      "name": "patch file exists: src/build/single_html.rs",
+      "detail": ""
+    },
+    {
+      "name": "patch file exists: src/build/config.rs",
+      "detail": ""
+    },
+    {
+      "name": "manifest contains ManifestCapabilities",
+      "detail": ""
+    },
+    {
+      "name": "manifest contains ManifestBundle",
+      "detail": ""
+    },
+    {
+      "name": "manifest contains build_target",
+      "detail": ""
+    },
+    {
+      "name": "manifest contains capabilities",
+      "detail": ""
+    },
+    {
+      "name": "manifest contains bundle",
+      "detail": ""
+    },
+    {
+      "name": "BuildConfig contains BundlerKind",
+      "detail": ""
+    },
+    {
+      "name": "BuildConfig contains BuildTarget",
+      "detail": ""
+    },
+    {
+      "name": "BuildConfig contains bundler",
+      "detail": ""
+    },
+    {
+      "name": "BuildConfig contains target",
+      "detail": ""
+    },
+    {
+      "name": "BuildConfig contains security",
+      "detail": ""
+    },
+    {
+      "name": "relative import computed from wrapper parent",
+      "detail": "../../../app/blog/[slug]/page.tsx"
+    },
+    {
+      "name": "source_has_loader_export detects loader",
+      "detail": ""
+    },
+    {
+      "name": "server wrapper exposes loader",
+      "detail": ""
+    },
+    {
+      "name": "server wrapper exposes load(ctx)",
+      "detail": ""
+    },
+    {
+      "name": "client wrapper uses clientLoader, not server loader",
+      "detail": ""
+    },
+    {
+      "name": "generated file exists: server-entry.js",
+      "detail": ""
+    },
+    {
+      "name": "generated file exists: client-runtime.js",
+      "detail": ""
+    },
+    {
+      "name": "generated file exists: routes/route-blog-slug.server.js",
+      "detail": ""
+    },
+    {
+      "name": "generated file exists: routes/route-blog-slug.client.js",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config contains forgeAliasPlugin",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config contains forgeSecurityPlugin",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config contains forgeManifestPlugin",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config contains platform: \"node\"",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config contains platform: \"browser\"",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config contains \"forge:data\"",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config contains process.env.NODE_ENV",
+      "detail": ""
+    },
+    {
+      "name": "rolldown config passes node --check",
+      "detail": ""
+    },
+    {
+      "name": "security scan catches eval",
+      "detail": ""
+    },
+    {
+      "name": "security scan catches new Function",
+      "detail": ""
+    },
+    {
+      "name": "security scan catches internal import",
+      "detail": ""
+    },
+    {
+      "name": "security scan catches remote import",
+      "detail": ""
+    },
+    {
+      "name": "classifies js",
+      "detail": ""
+    },
+    {
+      "name": "classifies css",
+      "detail": ""
+    },
+    {
+      "name": "classifies map",
+      "detail": ""
+    },
+    {
+      "name": "classifies json",
+      "detail": ""
+    },
+    {
+      "name": "bundle manifest maps route to public path",
+      "detail": ""
+    },
+    {
+      "name": "capsule hash computed for bundle output",
+      "detail": "bfde5d9ce7210674"
+    },
+    {
+      "name": "single html escapes closing script",
+      "detail": ""
+    },
+    {
+      "name": "single html has forge root",
+      "detail": ""
+    },
+    {
+      "name": "single html has singleFile capability data",
+      "detail": ""
+    },
+    {
+      "name": "rolldown source has forge manifest plugin",
+      "detail": ""
+    },
+    {
+      "name": "rolldown source has alias plugin",
+      "detail": ""
+    },
+    {
+      "name": "rolldown source has CLI adapter",
+      "detail": ""
+    }
+  ],
+  "failed": [],
+  "blocked": [
+    {
+      "name": "rolldown binary available",
+      "detail": "[Errno 13] Permission denied: 'rolldown'"
+    },
+    {
+      "name": "cargo test",
+      "detail": "cargo is not executable/permission denied in this environment"
+    }
+  ]
+}

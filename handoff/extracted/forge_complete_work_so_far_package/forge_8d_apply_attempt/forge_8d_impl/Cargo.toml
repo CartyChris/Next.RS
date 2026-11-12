@@ -1,0 +1,18 @@
+[package]
+name = "forge_8d_impl"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "forge_8d_impl"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+async-trait = "0.1"
+blake3 = "1"
+walkdir = "2"
+pathdiff = "0.2"
+tokio = { version = "1", features = ["process", "fs", "macros", "rt", "time"] }

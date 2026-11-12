@@ -1,0 +1,106 @@
+{
+  "passed": 17,
+  "failed": 2,
+  "results": [
+    {
+      "name": "safe_entry_name",
+      "passed": true,
+      "detail": "blog_slug"
+    },
+    {
+      "name": "relative_import_points_to_source",
+      "passed": true,
+      "detail": "../../../app/blog/[slug]/page.tsx"
+    },
+    {
+      "name": "server_wrapper_exposes_loader",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "client_wrapper_uses_clientLoader_not_server_loader",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "config_has_alias_plugin",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "config_has_manifest_plugin",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "config_denies_internal_import_prefix",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "config_has_browser_platform",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "generated_config_is_js_parseable",
+      "passed": true,
+      "detail": "\u001b[33mtrue\u001b[39m \u001b[33m1\u001b[39m\n"
+    },
+    {
+      "name": "security_scan_catches_eval",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "security_scan_catches_new_function",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "security_scan_catches_internal_import",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "manifest_maps_route_to_public_path",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "capsule_includes_bundle_file",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "single_html_has_root",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "single_html_escapes_script_close",
+      "passed": true,
+      "detail": "<!doctype html><div id=\"__forge_root\"></div><script type=\"module\">console.log(\"<\\/script><img src=x onerror=alert(1)>\")</script>"
+    },
+    {
+      "name": "single_html_capabilities_do_not_overclaim_ssr",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "rolldown_binary_available",
+      "passed": false,
+      "detail": "None"
+    },
+    {
+      "name": "npm_rolldown_lookup",
+      "passed": false,
+      "detail": "TimeoutExpired(['npm', 'view', 'rolldown', 'version'], 5)"
+    }
+  ],
+  "generated_files": {
+    "server_wrapper": "/mnt/data/forge_8d_verification/project/.forge/generated/routes/route-blog_slug.server.js",
+    "client_wrapper": "/mnt/data/forge_8d_verification/project/.forge/generated/routes/route-blog_slug.client.js",
+    "rolldown_config": "/mnt/data/forge_8d_verification/project/.forge/rolldown.config.mjs"
+  }
+}

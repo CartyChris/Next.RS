@@ -1,0 +1,6 @@
+/target
+node_modules
+.forge
+dist
+*.log
+.DS_Store
