@@ -63,7 +63,13 @@ async fn react_single_html_and_static() {
     require_modules("react");
     let root = example("react");
     build(&root, Target::SingleHtml).await.unwrap();
+    let packed = std::fs::read_to_string(root.join("dist/index.html")).unwrap();
+    assert!(packed.contains("DecompressionStream") && packed.contains("<h1>Hello Forge</h1>"), "compressed by default");
+    // Uncompressed, the embedded loader data is visible in the file.
+    std::fs::write(root.join("forge.config.json"), r#"{"title":"Forge React","build":{"compress":false}}"#).unwrap();
+    build(&root, Target::SingleHtml).await.unwrap();
     let html = std::fs::read_to_string(root.join("dist/index.html")).unwrap();
+    assert!(html.len() > packed.len() * 2 && !html.contains("DecompressionStream"));
     assert!(html.contains("<h1>Hello Forge</h1>"));
     assert!(html.contains(r#"Single-file"#) || html.contains("single-file"), "blog loader data embedded");
     assert!(html.contains(r##"<a href="#/blog">"##), "prerendered Links use hash routing");

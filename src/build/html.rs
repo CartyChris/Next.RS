@@ -8,6 +8,8 @@ use crate::config::{Compress, Csp, SecurityConfig};
 
 pub const ROOT_ID: &str = "__forge_root";
 pub const DATA_ID: &str = "__FORGE_DATA__";
+/// The single-file app's module script (forge:file `saveSelf` copies it).
+pub const APP_SCRIPT_ID: &str = "__forge_app";
 pub const LIVE_RELOAD_PATH: &str = "/_forge/live.js";
 
 pub fn escape_html(s: &str) -> String {
@@ -216,11 +218,11 @@ fn base122_decoder(text: &str, len: usize) -> String {
 /// Compressed: deflate-raw, then `base122` text, inflated with `DecompressionStream` and
 /// imported from a blob URL, so the code runs as the same ES module it would be inline.
 pub fn single_file_script(js: &str, compress: Compress) -> (String, bool) {
-    let inline = || format!(r#"<script type="module">{}</script>"#, escape_inline_script(js));
+    let inline = || format!(r#"<script type="module" id="{APP_SCRIPT_ID}">{}</script>"#, escape_inline_script(js));
     let packed = || {
         let bytes = deflate(js.as_bytes());
         format!(
-            r#"<script type="module">{};await import(URL.createObjectURL(new Blob([await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob()],{{type:"text/javascript"}})));</script>"#,
+            r#"<script type="module" id="{APP_SCRIPT_ID}">{};await import(URL.createObjectURL(new Blob([await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob()],{{type:"text/javascript"}})));</script>"#,
             base122_decoder(&base122(&bytes), bytes.len())
         )
     };

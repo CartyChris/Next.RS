@@ -39,6 +39,7 @@ pub const RUNTIME: &[(&str, &str)] = &[
     ("game.js", include_str!("../runtime/js/game.js")),
     ("realtime.server.js", include_str!("../runtime/js/realtime.server.js")),
     ("realtime.client.js", include_str!("../runtime/js/realtime.client.js")),
+    ("file.js", include_str!("../runtime/js/file.js")),
 ];
 
 /// Public virtual modules: `(specifier, server file, client file)`.
@@ -50,6 +51,7 @@ pub const VIRTUAL_MODULES: &[(&str, &str, &str)] = &[
     ("forge:ai", "ai.js", "ai.js"),
     ("forge:game", "game.js", "game.js"),
     ("forge:realtime", "realtime.server.js", "realtime.client.js"),
+    ("forge:file", "file.js", "file.js"),
 ];
 
 pub const NOT_FOUND_ID: &str = "not_found";

@@ -254,3 +254,21 @@ async fn review_regressions_build() {
     assert!(format!("{err:#}").contains("`eval` is denied"), "{err:#}");
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forge_file_and_target_constant() {
+    // `import.meta.env.TARGET` is a build-time constant, and forge:file imports cleanly on the
+    // server (prerendering) as well as in the browser bundle.
+    let page = r#"import { embeddedState, fileName } from "forge:file";
+export const render = () => `<p id="t">${import.meta.env.TARGET}|${embeddedState() === undefined}|${fileName()}</p>`;
+export function mount(el) { el.dataset.target = import.meta.env.TARGET; }"#;
+    for (target, expect) in [(Target::SingleHtml, "single-html"), (Target::Static, "static")] {
+        let root = project(&format!("file-{expect}"), &[("app/page.js", page)]);
+        build(&root, target).await.unwrap();
+        let html = std::fs::read_to_string(root.join("dist/index.html")).unwrap();
+        assert!(html.contains(&format!(r#"<p id="t">{expect}|true|index.html</p>"#)), "{html}");
+        // Only single files carry the id that saveSelf() copies the app script by.
+        assert_eq!(html.contains(r#"id="__forge_app""#), target == Target::SingleHtml, "{html}");
+        std::fs::remove_dir_all(root).ok();
+    }
+}

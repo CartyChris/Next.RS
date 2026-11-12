@@ -158,6 +158,52 @@ declare module "forge:game" {
   export function fit(canvas: HTMLCanvasElement, onResize?: (width: number, height: number, dpr: number) => void, options?: { maxDpr?: number }): () => void;
 }
 
+declare module "forge:file" {
+  export type SaveOptions = {
+    /** MIME type; inferred from the data and the file extension otherwise. */
+    type?: string;
+    /** Let the user pick where to write (File System Access API) instead of downloading. */
+    picker?: boolean;
+    /** With `picker`: later saves with the same key write to the same file without asking. */
+    key?: string;
+  };
+  /** Ask the user for files; `[]` if they cancel. `accept` as for `<input type="file">`. */
+  export function openFiles(options?: { accept?: string; multiple?: boolean }): Promise<File[]>;
+  /** Ask the user for one file; `null` if they cancel. */
+  export function openFile(options?: { accept?: string }): Promise<File | null>;
+  /** Save a Blob, string, bytes or JSON value as `name`. Resolves `false` if the user cancelled. */
+  export function saveFile(data: Blob | string | ArrayBuffer | ArrayBufferView | unknown, name: string, options?: SaveOptions): Promise<boolean>;
+  /** Files dropped on `target` (default: the window). Returns a cleanup function. */
+  export function onDrop(onFiles: (files: File[]) => void, options?: { target?: EventTarget; onOver?: (over: boolean) => void }): () => void;
+  /** React: files dropped anywhere (or on `ref.current`); returns whether a drag is hovering. */
+  export function useDrop(onFiles: (files: File[]) => void, ref?: { current: EventTarget | null }): boolean;
+  /** The state saved into this single-html file by `saveSelf`, or `undefined`. */
+  export function embeddedState<T = unknown>(): T | undefined;
+  /** The name of the file this page was opened from (`index.html` if unknown). */
+  export function fileName(): string;
+  /** This single-html app as an HTML document with `state` embedded. */
+  export function selfHtml(state?: unknown): string;
+  /** Save a copy of this single-html app with `state` embedded; opening it restores the state. */
+  export function saveSelf(state: unknown, options?: { name?: string; picker?: boolean }): Promise<boolean>;
+  /** React: state saved in this file (or `initial`), unsaved-change tracking, Ctrl/Cmd+S to save. */
+  export function useDocument<T>(
+    initial: T,
+    options?: { name?: string; picker?: boolean; shortcut?: boolean },
+  ): [T, (next: T | ((prev: T) => T)) => void, { save(): Promise<boolean>; dirty: boolean }];
+}
+
+interface ImportMetaEnv {
+  readonly MODE: string;
+  readonly DEV: boolean;
+  readonly PROD: boolean;
+  readonly SSR: boolean;
+  /** The build target: "server", "static" or "single-html". */
+  readonly TARGET: "server" | "static" | "single-html";
+}
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 /** Context passed to `loader()` and API route handlers. */
 interface ForgeContext<P extends Record<string, string> = Record<string, string>> {
   params: P;

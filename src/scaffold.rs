@@ -40,6 +40,11 @@ pub const TEMPLATES: &[(&str, &str, Files)] = &[
         files!("ai-chat": "package.json", "forge.config.json", "tsconfig.json", "app/chat.css", "app/page.tsx", "app/api/chat/route.ts"),
     ),
     (
+        "pixel",
+        "pixel-art editor in one HTML file that saves itself (forge:file: save-self, drop, export)",
+        files!("pixel": "package.json", "forge.config.json", "app/pixel.css", "app/page.tsx"),
+    ),
+    (
         "arena",
         "multiplayer three.js arena: socket rooms, neural bots trained in a worker, offline single file",
         files!("arena": "package.json", "forge.config.json", "tsconfig.json", "app/arena.css", "app/layout.tsx", "app/page.tsx", "app/loader.ts", "app/not-found.tsx",

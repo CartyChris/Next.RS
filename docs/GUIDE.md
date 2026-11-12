@@ -287,6 +287,34 @@ Single-html details:
 - The script is compressed automatically once it is over 16 kB (`"build": { "compress": "auto" }`, the default; `true` / `false` force it). It is deflated and stored as base-122 text (7 bits per byte, against base64's 6), then inflated with `DecompressionStream` and imported as the same ES module. The examples' files come out 64–71% smaller: React 235 → 85 kB, three.js game 504 → 145 kB, Forge Arena 802 → 257 kB.
 - `public/` is not included; import assets from code so they are inlined.
 - Dynamic `import()` of app code is not allowed (everything is one script).
+- `import.meta.env.TARGET` is `"single-html"` (or `"server"` / `"static"`), a build-time constant.
+
+### Self-saving single files
+
+`forge:file` turns a single-html app into a document: the file saves a copy of itself with your state inside, and opening that copy starts from the saved state. No server, no storage permissions, and the file can be emailed or shared like any other document.
+
+```tsx
+import { useDocument, useDrop, saveFile } from "forge:file";
+
+export default function Notes() {
+  // Starts from the state saved in this file (or the initial value). Ctrl/Cmd+S saves.
+  const [doc, setDoc, { save, dirty }] = useDocument({ notes: [] as string[] });
+  const dragging = useDrop(async (files) => setDoc({ notes: [...doc.notes, await files[0].text()] }));
+  return (
+    <main className={dragging ? "drop" : ""}>
+      <button onClick={save}>{dirty ? "Save*" : "Save"}</button>
+      <button onClick={() => saveFile(doc, "notes.json")}>Export JSON</button>
+      {doc.notes.map((n, i) => <p key={i}>{n}</p>)}
+    </main>
+  );
+}
+```
+
+- `saveSelf(state)` writes `<the original file> + <script id="__FORGE_STATE__">` and downloads it under the current file name; saving an unchanged copy again is byte-identical. `{ picker: true }` uses the File System Access API where available: pick the same file once to save in place, and later saves write there directly.
+- The copy client-renders on open (the markup prerendered at build time no longer matches the saved state), so there is no hydration mismatch.
+- `embeddedState()` reads the saved state outside React; `selfHtml(state)` returns the document without saving it.
+- `openFile` / `openFiles` (no `<input>` plumbing, `[]`/`null` on cancel), `saveFile(blob | string | bytes | json, name)`, `onDrop` / `useDrop` for drag-and-drop anywhere or on one element.
+- See `examples/pixel` (`forge new my-art --template pixel`): a pixel-art editor in one 90 kB file with image import by drop, PNG/JSON export and save-self.
 
 ## Virtual modules
 
@@ -298,6 +326,7 @@ Single-html details:
 | `forge:store` | `store.get/set/remove`, `usePersistentState(key, initial)`: localStorage-backed, survives reloads, syncs tabs |
 | `forge:ai` | `chat()`, `runAgent()` ([above](#ai-chat-tools-and-agents)); `streamText(url, init)`, `sse(response)`, `sseResponse(asyncIterable)`, `useStream()` |
 | `forge:realtime` | browser: `connect(path, handlers)`, `useSocket(path, onMessage)`; server: `publish(topic, msg)`, `subscribers(topic)` |
+| `forge:file` | `openFile`, `openFiles`, `saveFile`, `onDrop`, `useDrop`; self-saving single files: `useDocument`, `saveSelf`, `embeddedState`, `selfHtml`, `fileName` ([above](#self-saving-single-files)) |
 | `forge:game` | `loop({ update, render, step })` fixed-timestep loop, `input()` keyboard/pointer state, `fit(canvas, onResize)` DPR-aware sizing |
 
 Types are written to `.forge/types/forge.d.ts` on every build; include `.forge/types` in `tsconfig.json`.

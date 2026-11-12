@@ -2,7 +2,8 @@
 // Usage: node smoke.mjs <path to forge binary>   (examples need `npm install` first)
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, extname, resolve } from "node:path";
 import { createRequire } from "node:module";
 
@@ -59,7 +60,11 @@ async function page(browser, options) {
   const p = await browser.newPage(options);
   p.errors = [];
   p.on("pageerror", (e) => p.errors.push(e.message));
-  p.on("console", (m) => m.type() === "error" && !m.text().includes("404") && p.errors.push(m.text()));
+  p.requests = [];
+  p.on("request", (r) => p.requests.push(r.url()));
+  // Hydration mismatches are recovered from (and reported as warnings), but are still bugs.
+  const bad = (m) => (m.type() === "error" && !m.text().includes("404")) || m.text().startsWith("[forge] hydration");
+  p.on("console", (m) => bad(m) && p.errors.push(m.text()));
   return p;
 }
 
@@ -184,6 +189,55 @@ try {
   await p.goto("file://" + join(examples, "arena/dist/index.html") + "#/play/solo");
   await p.waitForFunction(() => document.querySelectorAll("#scores li").length === 5, null, { timeout: 20000 });
   check("arena single-html: offline match against four bots", (await p.textContent(".pill")) === "offline vs bots");
+
+  // Pixel Pad: a single file that saves a copy of itself with the art embedded (forge:file).
+  build("pixel", "single-html");
+  const pixelFile = join(examples, "pixel/dist/index.html");
+  const saves = await mkdtemp(join(tmpdir(), "forge-pixel-"));
+  const openPixel = async (path) => {
+    const q = await page(browser, { viewport: { width: 700, height: 900 } });
+    await q.goto("file://" + path);
+    await q.waitForSelector("#canvas");
+    await q.waitForTimeout(150);
+    return q;
+  };
+  const pixels = (q) => q.textContent("#count");
+  p = await openPixel(pixelFile);
+  check("pixel: starts with the starter sprite", (await p.textContent("#status")) === "new" && (await pixels(p)) !== "0 px");
+  await p.click("text=clear");
+  await p.click('[data-color="5"]');
+  const box = await p.locator("#canvas").boundingBox();
+  const cell = box.width / 32;
+  await p.mouse.move(box.x + 3.5 * cell, box.y + 3.5 * cell);
+  await p.mouse.down();
+  for (let x = 4; x <= 10; x++) await p.mouse.move(box.x + (x + 0.5) * cell, box.y + 3.5 * cell);
+  await p.mouse.up();
+  check("pixel: paints a stroke and marks it unsaved", (await pixels(p)) === "8 px" && (await p.textContent("#status")) === "unsaved changes");
+  const [saved] = await Promise.all([p.waitForEvent("download"), p.keyboard.press("Control+s")]);
+  const copy = join(saves, "copy.html");
+  await saved.saveAs(copy);
+  check("pixel: Ctrl+S saves a copy named after the file", saved.suggestedFilename() === "index.html", saved.suggestedFilename());
+  check("pixel: saving clears the unsaved flag", (await p.textContent("#status")) !== "unsaved changes");
+  check("pixel: no network requests, no errors", p.requests.every((u) => /^(file|blob|data):/.test(u)) && !p.errors.length, JSON.stringify([p.requests, p.errors]));
+  p = await openPixel(copy);
+  check("pixel: the copy opens with the saved art", (await p.textContent("#status")) === "opened with saved art" && (await pixels(p)) === "8 px");
+  const [again] = await Promise.all([p.waitForEvent("download"), p.click("#save")]);
+  await again.saveAs(join(saves, "again.html"));
+  const [a, b, original] = await Promise.all([readFile(copy), readFile(join(saves, "again.html")), readFile(pixelFile)]);
+  check("pixel: re-saving unchanged is byte-identical", a.equals(b), `${a.length} vs ${b.length}`);
+  check("pixel: the copy is the original plus the state", a.length > original.length && a.length - original.length < 4000, `${original.length} -> ${a.length}`);
+  await p.evaluate(async () => {
+    const c = Object.assign(document.createElement("canvas"), { width: 2, height: 2 });
+    const g = c.getContext("2d");
+    g.fillStyle = "#b13e53";
+    g.fillRect(0, 0, 2, 2);
+    const dt = new DataTransfer();
+    dt.items.add(new File([await new Promise((r) => c.toBlob(r))], "red.png", { type: "image/png" }));
+    for (const type of ["dragenter", "dragover", "drop"]) dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  await p.waitForFunction(() => document.querySelector("#count").textContent === "1024 px", null, { timeout: 5000 }).catch(() => {});
+  check("pixel: a dropped image is imported onto the palette", (await pixels(p)) === "1024 px", await pixels(p));
+  check("pixel: the copy has no errors (no hydration over stale markup)", !p.errors.length, JSON.stringify(p.errors));
 } catch (e) {
   failures.push(String(e?.stack ?? e));
   console.error(e);

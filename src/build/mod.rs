@@ -192,6 +192,7 @@ fn defines(project: &Project, server: bool) -> Vec<(String, String)> {
         ("import.meta.env.DEV".to_string(), dev.to_string()),
         ("import.meta.env.PROD".to_string(), (!dev).to_string()),
         ("import.meta.env.SSR".to_string(), server.to_string()),
+        ("import.meta.env.TARGET".to_string(), format!("\"{}\"", project.target.as_str())),
     ];
     if server {
         // The server bundle is evaluated without a module URL; give relative `new URL()`s a base.
