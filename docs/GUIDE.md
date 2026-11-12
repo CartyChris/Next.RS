@@ -335,6 +335,21 @@ forge pack demo.html --offline       # only the package and download caches
 - **Safety**: only files inside the page's folder are read (no hidden files, nothing reached through symlinks or `..`). Package install scripts never run.
 - The output always declares UTF-8 (pages without a charset are read as windows-1252 from disk); non-UTF-8 inputs are decoded with their declared charset.
 
+### One component, one file
+
+`forge pack` also takes a single `.jsx` / `.tsx` / `.js` / `.ts` file, with no project, `package.json` or `node_modules` needed:
+
+```bash
+forge pack Counter.tsx            # → Counter.html
+forge pack sketch.js --title "Sketch"
+```
+
+- A default-exported component is mounted with `react-dom/client` (or Preact's `render` when the file imports `preact`, with JSX compiled for Preact).
+- A module exporting `mount(el)` gets the page's root element; any other file just runs as the page's module.
+- Bare imports (`react`, `lucide-react`, `recharts`, `three`, …) install from npm at the versions in a `package.json` next to the file, else the latest. A nearby `node_modules` is used first.
+- CSS imports are inlined. If the markup uses Tailwind classes and the file imports no stylesheet (the usual shape of AI-generated components), Tailwind's browser build is added (`--tailwind` / `--no-tailwind` to decide yourself).
+- The output is `<Name>.html` next to the file, or `<Name>.packed.html` if `<Name>.html` exists and was not written by `forge pack`. The title comes from the file name (`counter-app.tsx` → "Counter App") unless you pass `--title`.
+
 Not handled yet: workers created from separate files, `text/babel` with `data-type="module"`, and assets whose URLs are built at runtime (`path + name + ".png"`); the command lists what it kept as links.
 
 ## Virtual modules

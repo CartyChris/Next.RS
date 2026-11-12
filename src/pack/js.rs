@@ -586,6 +586,16 @@ impl Packer {
                 .collect(),
             ),
             code_splitting: Some(rolldown::CodeSplittingMode::Bool(false)),
+            transform: self.jsx_import_source.lock().unwrap().clone().map(|source| {
+                rolldown_common::BundlerTransformOptions {
+                    jsx: Some(rolldown_common::Either::Right(rolldown_common::JsxOptions {
+                        runtime: Some("automatic".into()),
+                        import_source: Some(source),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                }
+            }),
             ..Default::default()
         };
         let mut bundler = Bundler::with_plugins(options, vec![<PackPlugin as Plugin>::new_shared(plugin)])
@@ -610,6 +620,9 @@ impl Packer {
                 order = c.modules.keys.iter().map(|k| k.to_string()).collect();
             }
         }
+        if !self.options.minify {
+            js = self.module_comments(&js, &order);
+        }
         let collected = std::mem::take(&mut *css_state.lock().unwrap());
         let mut css = String::new();
         for id in order {
@@ -620,6 +633,46 @@ impl Packer {
         }
         Ok(Bundled { js, css })
     }
+}
+
+impl Packer {
+    /// Unminified bundles label each module with its path relative to the page's folder,
+    /// which for packages is the user's cache directory. Show `npm:<package>/<file>` instead
+    /// (and page files relative to the page), so no local layout leaks into a shared file.
+    fn module_comments(&self, js: &str, ids: &[String]) -> String {
+        let modules = self.npm.workspace().join("node_modules");
+        let mut names: HashMap<String, String> = HashMap::new();
+        for id in ids {
+            let path = Path::new(id);
+            let shown = if let Ok(rel) = path.strip_prefix(&modules) {
+                format!("npm:{}", rel.to_string_lossy().replace('\\', "/"))
+            } else if let Ok(rel) = path.strip_prefix(&self.dir) {
+                let rel = rel.to_string_lossy().replace('\\', "/");
+                if rel.starts_with(VIRTUAL) { "(inline script)".to_string() } else { rel }
+            } else {
+                continue;
+            };
+            names.insert(relative_to(&self.dir, path), shown);
+        }
+        js.lines()
+            .map(|line| {
+                match line.strip_prefix("//#region ").or_else(|| line.strip_prefix("// ")).and_then(|p| names.get(p)) {
+                    Some(shown) => format!("// {shown}"),
+                    None => line.to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// `to` relative to directory `from`, with `..` segments, `/`-separated.
+fn relative_to(from: &Path, to: &Path) -> String {
+    let (a, b): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let mut parts: Vec<String> = std::iter::repeat_n("..".to_string(), a.len() - common).collect();
+    parts.extend(b[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+    parts.join("/")
 }
 
 /// Where a file inside the package workspace came from, for messages.
@@ -694,6 +747,15 @@ const f = new URL("./f.png", import.meta.url); load(`g.${n}.png`); export const 
         let found = literals(src, SourceType::mjs());
         let values: Vec<(&str, bool)> = found.0.iter().map(|l| (l.value.as_str(), l.module_relative)).collect();
         assert_eq!(values, [("a.png", false), ("b.png", false), ("./f.png", true), ("h.png", false)]);
+    }
+
+    #[test]
+    fn relative_paths() {
+        assert_eq!(
+            relative_to(Path::new("/home/a/site"), Path::new("/home/a/.cache/forge/x.js")),
+            "../.cache/forge/x.js"
+        );
+        assert_eq!(relative_to(Path::new("/home/a/site"), Path::new("/home/a/site/app.js")), "app.js");
     }
 
     #[test]

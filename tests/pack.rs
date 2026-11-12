@@ -129,6 +129,8 @@ fn options(registry: &str, cache: &Path) -> pack::Options {
         offline: false,
         registry: registry.into(),
         cache_dir: cache.to_path_buf(),
+        tailwind: None,
+        title: None,
     }
 }
 
@@ -269,5 +271,46 @@ async fn large_classic_scripts_and_styles_are_compressed_in_place() {
     assert!(out.find("__forgeInflateBytes=").unwrap() < out.find(r#"createElement("style")"#).unwrap());
     // The inline script after the compressed one is untouched, so it runs after it.
     assert!(out.find(r#"createElement("script")"#).unwrap() < out.find("window.after = window.v2999").unwrap());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn packs_a_component_file() {
+    unsafe { std::env::set_var("NO_PROXY", "127.0.0.1,localhost") };
+    unsafe { std::env::set_var("no_proxy", "127.0.0.1,localhost") };
+    let (base, server) = servers().await;
+    // A module with `mount(el)`, a bare import (range from the package.json beside it), CSS.
+    let dir = site(
+        "component",
+        &[
+            ("widget.js", b"import { VERSION } from 'mini3d';\nimport './widget.css';\nexport function mount(el) { el.textContent = VERSION + ':' + el.id; }\n"),
+            ("widget.css", b"#root { color: rebeccapurple }"),
+            ("package.json", br#"{"dependencies":{"mini3d":"^1.0.0"}}"#),
+            // Someone's own widget.html: never overwritten by default.
+            ("widget.html", b"<p>hand-written</p>"),
+        ],
+    );
+    let cache = dir.join("cache");
+    let summary = pack::run(&dir.join("widget.js"), None, options(&base, &cache)).await.unwrap();
+    assert_eq!(summary.output, dir.join("widget.packed.html"));
+    assert_eq!(std::fs::read_to_string(dir.join("widget.html")).unwrap(), "<p>hand-written</p>");
+    let out = std::fs::read_to_string(&summary.output).unwrap();
+    assert!(out.contains(r#"<div id="root"></div>"#) && out.contains("<title>Widget</title>"), "{out}");
+    assert!(out.contains("mini3d-1") && out.contains("mount(document.getElementById(\"root\"))"), "{out}");
+    // Module labels in unminified output name packages, not the local cache directory.
+    assert!(out.contains("// npm:mini3d/build/mini3d.module.js") && out.contains("// widget.js"), "{out}");
+    assert!(!out.contains("cache/work"), "{out}");
+    assert!(out.contains("color: rebeccapurple") && !out.contains("tailwind"), "{out}");
+    assert!(summary.notes.iter().any(|n| n.contains("mount(el)")), "{:?}", summary.notes);
+    // A file `forge pack` wrote may be replaced.
+    std::fs::write(dir.join("widget.html"), &out).unwrap();
+    let again = pack::run(&dir.join("widget.js"), None, options(&base, &cache)).await.unwrap();
+    assert_eq!(again.output, dir.join("widget.html"));
+    // A range nothing satisfies is reported with the package's name.
+    std::fs::write(dir.join("package.json"), br#"{"dependencies":{"mini3d":"^2"}}"#).unwrap();
+    std::fs::remove_dir_all(&cache).ok();
+    let err = pack::run(&dir.join("widget.js"), None, options(&base, &cache)).await.unwrap_err();
+    assert!(format!("{err:#}").contains("no version of `mini3d` matches `^2`"), "{err:#}");
+    server.abort();
     std::fs::remove_dir_all(&dir).ok();
 }

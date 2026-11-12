@@ -283,6 +283,22 @@ try {
   check("pack: big classic script and CSS compressed", packedSize < 60_000, String(packedSize));
   check("pack: compressed script ran before the next script", (await p.evaluate(() => window.after)) === 3999);
   check("pack: compressed CSS applied before scripts ran", (await p.evaluate(() => window.styledEarly)) === "42px");
+
+  // forge pack Component.tsx: no package.json, no node_modules; React, lucide and Tailwind from npm.
+  pack(join(fixtures, "component/Counter.tsx"), join(packs, "counter.html"));
+  p = await offline();
+  await p.goto("file://" + join(packs, "counter.html"));
+  for (const id of ["#inc", "#inc", "#dec", "#inc"]) await p.click(id);
+  check("pack component: React mounted, state works", (await p.textContent("#count")).trim() === "2");
+  check(
+    "pack component: Tailwind classes and icons render offline",
+    await p.evaluate(() => getComputedStyle(document.querySelector("main")).display === "flex" && document.querySelectorAll("svg.lucide").length === 2),
+  );
+  check("pack component: no network, no errors", !p.blocked.length && !p.errors.length, JSON.stringify([p.blocked, p.errors]));
+  pack(join(fixtures, "component/sketch.js"), join(packs, "sketch.html"));
+  p = await offline();
+  await p.goto("file://" + join(packs, "sketch.html"));
+  check("pack script: mount(el) receives the root", (await p.evaluate(() => window.__mounted)) === "root" && (await p.$("#sketch")) !== null);
 } catch (e) {
   failures.push(String(e?.stack ?? e));
   console.error(e);

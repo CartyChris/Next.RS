@@ -210,7 +210,8 @@ pub async fn pack(p: &Arc<Packer>, html: &str) -> Result<String> {
             // The output is UTF-8 and says so first thing (see `rewrite`).
             "meta"
                 if el.attr("charset").is_some()
-                    || el.attr("http-equiv").is_some_and(|h| h.eq_ignore_ascii_case("content-type")) =>
+                    || el.attr("http-equiv").is_some_and(|h| h.eq_ignore_ascii_case("content-type"))
+                    || el.attr("name").is_some_and(|n| n.eq_ignore_ascii_case("generator")) =>
             {
                 outs.insert(i, Out::edit(Edit::Remove));
             }
@@ -500,7 +501,9 @@ async fn run(
 
 /// Without a declared charset a `file://` page is read as windows-1252, which garbles any
 /// non-ASCII text (and compressed payloads); the declaration must be in the first 1 kB.
-const CHARSET: &str = r#"<meta charset="utf-8">"#;
+const CHARSET: &str = r#"<meta charset="utf-8"><meta name="generator" content="forge pack">"#;
+/// Marks files `forge pack` wrote (and may overwrite).
+pub const GENERATOR: &str = r#"<meta name="generator" content="forge pack">"#;
 
 fn rewrite(html: &str, _els: &[El], outs: HashMap<usize, Out>, tail: &str) -> Result<String> {
     let index = RefCell::new(0usize);
@@ -616,12 +619,12 @@ mod tests {
         let out = rewrite(html, &els, outs, "<script>tail()</script>").unwrap();
         assert_eq!(
             out,
-            r#"<html><meta charset="utf-8"><head><style>b{}</style></head><body><img src="data:x"><p>keep</p><script>tail()</script></body></html>"#
+            r#"<html><meta charset="utf-8"><meta name="generator" content="forge pack"><head><style>b{}</style></head><body><img src="data:x"><p>keep</p><script>tail()</script></body></html>"#
         );
         let bare = rewrite("<!doctype html><p>x</p>", &[], HashMap::new(), "").unwrap();
-        assert_eq!(bare, r#"<!doctype html><meta charset="utf-8"><p>x</p>"#);
+        assert_eq!(bare, format!("<!doctype html>{CHARSET}<p>x</p>"));
         let head_only = rewrite("<head><title>t</title></head>", &[], HashMap::new(), "").unwrap();
-        assert_eq!(head_only, r#"<head><meta charset="utf-8"><title>t</title></head>"#);
+        assert_eq!(head_only, format!("<head>{CHARSET}<title>t</title></head>"));
     }
 
     #[test]

@@ -68,15 +68,25 @@ enum Command {
         #[arg(default_value = ".")]
         root: PathBuf,
     },
-    /// Turn an HTML page into one offline file: CDN scripts come from npm (verified),
-    /// everything else is downloaded, and all of it is inlined and compressed.
+    /// One offline HTML file from an HTML page or a component file (`App.tsx`): CDN scripts
+    /// and imports come from npm (verified), everything else is downloaded, and all of it is
+    /// inlined and compressed.
     #[cfg(feature = "pack")]
     Pack {
-        /// The page (`.html`).
+        /// An `.html` page, or a `.jsx` / `.tsx` / `.js` / `.ts` component or script.
         input: PathBuf,
-        /// Output file (default: `<name>.packed.html` next to the input).
+        /// Output file (default: `<name>.packed.html` for pages, `<name>.html` for components).
         #[arg(long, short)]
         output: Option<PathBuf>,
+        /// Components: page title (default: from the file name).
+        #[arg(long)]
+        title: Option<String>,
+        /// Components: add Tailwind's browser build (default: when the markup uses Tailwind classes).
+        #[arg(long, conflicts_with = "no_tailwind")]
+        tailwind: bool,
+        /// Components: never add Tailwind.
+        #[arg(long)]
+        no_tailwind: bool,
         /// auto | on | off: compress large scripts and styles.
         #[arg(long, default_value = "auto")]
         compress: String,
@@ -195,14 +205,22 @@ async fn run(cli: Cli) -> Result<()> {
             server.serve(addr).await?;
         }
         #[cfg(feature = "pack")]
-        Command::Pack { input, output, compress, no_minify, offline, registry } => {
+        Command::Pack { input, output, title, tailwind, no_tailwind, compress, no_minify, offline, registry } => {
             let compress = match compress.as_str() {
                 "auto" => nextrs::config::Compress::Auto,
                 "on" | "true" => nextrs::config::Compress::On,
                 "off" | "false" => nextrs::config::Compress::Off,
                 other => anyhow::bail!("--compress takes auto, on or off (got `{other}`)"),
             };
-            let mut options = nextrs::pack::Options { compress, minify: !no_minify, offline, ..Default::default() };
+            let tailwind = if tailwind {
+                Some(true)
+            } else if no_tailwind {
+                Some(false)
+            } else {
+                None
+            };
+            let mut options =
+                nextrs::pack::Options { compress, minify: !no_minify, offline, tailwind, title, ..Default::default() };
             if let Some(r) = registry {
                 options.registry = r;
             }

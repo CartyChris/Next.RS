@@ -7,8 +7,10 @@
 //! * [`js`]: module scripts bundled with Rolldown, JSX compiled ahead of time, asset URLs in code
 //! * [`html`]: the page rewrite
 //! * [`inline`]: compressed classic scripts and styles that still run in place
+//! * [`component`]: a single component or script file becomes a page first
 
 pub mod cdn;
+pub mod component;
 pub mod css;
 pub mod html;
 pub mod inline;
@@ -37,6 +39,10 @@ pub struct Options {
     pub offline: bool,
     pub registry: String,
     pub cache_dir: PathBuf,
+    /// Component files: add Tailwind's browser build (`None`: when the markup uses it).
+    pub tailwind: Option<bool>,
+    /// Component files: the page title (default: from the file name).
+    pub title: Option<String>,
 }
 
 impl Default for Options {
@@ -47,6 +53,8 @@ impl Default for Options {
             offline: false,
             registry: default_registry(),
             cache_dir: default_cache_dir(),
+            tailwind: None,
+            title: None,
         }
     }
 }
@@ -114,6 +122,8 @@ pub struct Packer {
     notes: Mutex<Vec<String>>,
     sources: Mutex<BTreeMap<String, String>>,
     loaded: tokio::sync::Mutex<HashMap<Url, Arc<Resource>>>,
+    /// JSX import source for bundled modules (`preact`); React's by default.
+    pub jsx_import_source: Mutex<Option<String>>,
 }
 
 impl Packer {
@@ -155,6 +165,7 @@ impl Packer {
             notes: Default::default(),
             sources: Default::default(),
             loaded: Default::default(),
+            jsx_import_source: Default::default(),
         }))
     }
 
@@ -374,14 +385,42 @@ pub fn mime(name: &str, header: Option<&str>, bytes: &[u8]) -> String {
     sniffed.to_string()
 }
 
-/// Pack `input` (an HTML page) into `output` (default: `<name>.packed.html` beside it).
+/// Pack `input` into `output`. An HTML page becomes `<name>.packed.html` by default; a
+/// component or script file becomes `<name>.html` (or `.packed.html` if that name is taken
+/// by a file `forge pack` did not write).
 pub async fn run(input: &Path, output: Option<&Path>, options: Options) -> Result<Summary> {
     let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let packer = Packer::new(input, options)?;
     let source = html::decode(&std::fs::read(input).with_context(|| format!("reading {}", input.display()))?);
     let (html, default_name) = match ext.as_str() {
         "html" | "htm" => (html::pack(&packer, &source).await?, format!("{}.packed.html", stem(input))),
-        _ => bail!("forge pack takes an .html page (got `{}`)", input.display()),
+        "js" | "jsx" | "ts" | "tsx" | "mjs" | "mts" => {
+            let shape = component::analyze(&source, input)?;
+            let kind = shape.kind();
+            let tailwind = packer.options.tailwind.unwrap_or_else(|| shape.wants_tailwind());
+            match kind {
+                component::Kind::React => packer.note("mounted the default export as a React component"),
+                component::Kind::Preact => {
+                    packer.note("mounted the default export as a Preact component");
+                    *packer.jsx_import_source.lock().unwrap() = Some("preact".into());
+                }
+                component::Kind::Mount => packer.note("called the exported mount(el) with the page's root element"),
+                component::Kind::Script => packer.note("ran the file as the page's module script"),
+            }
+            if tailwind && packer.options.tailwind.is_none() {
+                packer.note(format!(
+                    "added Tailwind ({} utility classes in the markup; --no-tailwind to skip)",
+                    shape.tailwind_classes
+                ));
+            }
+            let title = packer.options.title.clone().unwrap_or_else(|| component::title_from(input));
+            let file = input.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+            let page = component::page(&file, &title, &kind, tailwind);
+            let name = format!("{}.html", stem(input));
+            let taken = std::fs::read_to_string(packer.dir.join(&name)).is_ok_and(|t| !t.contains(html::GENERATOR));
+            (html::pack(&packer, &page).await?, if taken { format!("{}.packed.html", stem(input)) } else { name })
+        }
+        _ => bail!("forge pack takes an .html page or a .js/.jsx/.ts/.tsx file (got `{}`)", input.display()),
     };
     let out = output.map(Path::to_path_buf).unwrap_or_else(|| packer.dir.join(default_name));
     if out.canonicalize().ok() == input.canonicalize().ok() {
