@@ -661,7 +661,9 @@ async fn api(app: &Arc<App>, route: &RouteEntry, params: routes::Params, req: Re
         nonce: "",
         stream: false,
     };
-    match app.pool.dispatch(serde_json::to_string(&request).unwrap(), body).await {
+    // Socket routes are rooms: their HTTP requests run on the room's worker too.
+    let worker = route.socket.then(|| app.pool.socket_worker(&pathname));
+    match app.pool.dispatch_on(worker, serde_json::to_string(&request).unwrap(), body).await {
         Ok(reply) => raw_response(
             StatusCode::from_u16(reply.head.status).unwrap_or(StatusCode::OK),
             Body::from_stream(reply.body.into_stream()),

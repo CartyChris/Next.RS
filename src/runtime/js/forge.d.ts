@@ -30,6 +30,12 @@ declare module "forge:data" {
 declare module "forge:cache" {
   export function cache<T>(key: string, fn: () => T | Promise<T>, options?: { ttl?: number; tags?: string[] }): Promise<T>;
   export function invalidate(keyOrTag: string): void;
+  /** The stored value, or undefined. Server: shared by all workers. */
+  export function get<T = unknown>(key: string): T | undefined;
+  /** Store a JSON-serialisable value (default ttl: one day). */
+  export function set<T>(key: string, value: T, options?: { ttl?: number; tags?: string[] }): T;
+  /** Live keys starting with `prefix`, sorted. */
+  export function keys(prefix?: string): string[];
 }
 
 declare module "forge:store" {

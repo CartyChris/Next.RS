@@ -39,6 +39,11 @@ export const socket = {
 export function POST(request, { params }) {
   return { delivered: publish("room:" + params.room, { type: "announce" }), subscribers: subscribers("room:" + params.room) };
 }
+
+// HTTP requests to a socket route run on the room's worker, so they see its state.
+export function GET(request, { params }) {
+  return { members: rooms.get(params.room)?.members.size ?? 0, count: rooms.get(params.room)?.count ?? 0 };
+}
 "#;
 
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -81,8 +86,14 @@ async fn socket_rooms_share_state_and_publish_across_workers() {
     assert_eq!(recv(&mut b).await["count"], 7);
     assert_eq!(recv(&mut a).await["count"], 7);
 
-    // An HTTP request on any worker publishes to sockets on another.
     let client = reqwest::Client::new();
+    for _ in 0..8 {
+        let state: serde_json::Value =
+            client.get(format!("{base}/api/room/red")).send().await.unwrap().json().await.unwrap();
+        assert_eq!(state, serde_json::json!({"members": 2, "count": 7}), "HTTP sees the room's state");
+    }
+
+    // A publish from HTTP reaches every subscriber.
     let res: serde_json::Value =
         client.post(format!("{base}/api/room/red")).send().await.unwrap().json().await.unwrap();
     assert_eq!(res, serde_json::json!({"delivered": 2, "subscribers": 2}));

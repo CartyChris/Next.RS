@@ -246,8 +246,10 @@ fn server_entry_source(input: &EmitInput<'_>) -> String {
     out.push_str(&imports.code);
     let _ = write!(
         out,
-        "\ncreateServer({{\n  dev: {},\n  renderers: {renderers},\n  routes: [\n    {}\n  ],\n  notFound: {not_found},\n  apis: [{}],\n}});\n",
+        "\ncreateServer({{\n  dev: {},\n  links: {},\n  renderers: {renderers},\n  routes: [\n    {}\n  ],\n  notFound: {not_found},\n  apis: [{}],\n}});\n",
         input.mode.is_dev(),
+        // Single-file builds are prerendered for hash routing: render `#/path` links.
+        js_str(if input.target == Target::SingleHtml { "hash" } else { "history" }),
         routes.join(",\n    "),
         apis.join(", "),
     );

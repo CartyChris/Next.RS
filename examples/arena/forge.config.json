@@ -1,0 +1,10 @@
+{
+  "title": "Forge Arena",
+  "server": {
+    "env": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ARENA_AI_PROVIDER"],
+    "allowFetch": ["api.openai.com", "localhost", "127.0.0.1"]
+  },
+  "build": {
+    "compress": true
+  }
+}

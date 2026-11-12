@@ -21,6 +21,21 @@ export async function cache(key, fn, { ttl = 60, tags = [] } = {}) {
   return p;
 }
 
+/** The stored value, or `undefined`. */
+export function get(key) {
+  const hit = host.cacheGet(String(key));
+  return hit === undefined ? undefined : JSON.parse(hit);
+}
+
+/** Store a JSON-serialisable value for `ttl` seconds (default: a day). */
+export function set(key, value, { ttl = 86400, tags = [] } = {}) {
+  host.cacheSet(String(key), JSON.stringify(value ?? null), ttl * 1000, tags.join(","));
+  return value;
+}
+
+/** Live keys that start with `prefix`, sorted. */
+export const keys = (prefix = "") => host.cacheKeys(String(prefix));
+
 /** Drop a key, or every entry carrying a tag. Also evicts cached pages tagged with it. */
 export function invalidate(keyOrTag) {
   host.cacheDelete(String(keyOrTag));

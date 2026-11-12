@@ -18,7 +18,8 @@ const env = new Proxy({}, { get: (_, key) => (typeof key === "string" ? host.env
 const closed = () => Object.assign(new Error("client disconnected"), { __forge: "closed" });
 const encode = (m) => (typeof m === "string" || m instanceof Uint8Array ? m : JSON.stringify(m));
 
-export function createServer({ routes, apis, notFound, renderers, dev }) {
+export function createServer({ routes, apis, notFound, renderers, dev, links = "history" }) {
+  rt.mode = links;
   const pages = new Map(routes.map((r) => [r.id, r]));
   if (notFound) pages.set(notFound.id, notFound);
   const apiById = new Map(apis.map((a) => [a.id, a]));

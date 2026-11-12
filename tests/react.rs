@@ -66,6 +66,7 @@ async fn react_single_html_and_static() {
     let html = std::fs::read_to_string(root.join("dist/index.html")).unwrap();
     assert!(html.contains("<h1>Hello Forge</h1>"));
     assert!(html.contains(r#"Single-file"#) || html.contains("single-file"), "blog loader data embedded");
+    assert!(html.contains(r##"<a href="#/blog">"##), "prerendered Links use hash routing");
     build(&root, Target::Static).await.unwrap();
     for f in ["index.html", "blog/index.html", "blog/hello/index.html", "_forge/data/blog/hello.json", "404.html"] {
         assert!(root.join("dist").join(f).is_file(), "missing {f}");

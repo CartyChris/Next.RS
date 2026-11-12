@@ -150,6 +150,15 @@ impl KvCache {
         self.entries.insert(key, (value, Instant::now() + ttl, tags));
     }
 
+    /// Live keys starting with `prefix`, sorted.
+    pub fn keys(&self, prefix: &str) -> Vec<String> {
+        let now = Instant::now();
+        let mut keys: Vec<String> =
+            self.entries.iter().filter(|(k, e)| k.starts_with(prefix) && e.1 > now).map(|(k, _)| k.clone()).collect();
+        keys.sort();
+        keys
+    }
+
     /// Remove `key` and every entry tagged `key`.
     pub fn invalidate(&mut self, key_or_tag: &str) {
         self.remove(key_or_tag);
@@ -492,11 +501,24 @@ impl Pool {
     /// Dropping the returned future or the reply body before the response ends aborts the
     /// request in JS (its `ctx.signal` fires).
     pub async fn dispatch(&self, request: String, body: Option<Bytes>) -> Result<Reply, DispatchError> {
+        self.dispatch_on(None, request, body).await
+    }
+
+    /// Like [`Pool::dispatch`], on a specific worker (`None`: the least loaded).
+    pub async fn dispatch_on(
+        &self,
+        worker: Option<usize>,
+        request: String,
+        body: Option<Bytes>,
+    ) -> Result<Reply, DispatchError> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let queued = Arc::new(AtomicUsize::new(0));
         let drained = Arc::new(Notify::new());
         let sink = Sink { tx, queued: queued.clone(), drained: drained.clone() };
-        let worker = self.workers.iter().min_by_key(|w| w.inflight.load(Ordering::Relaxed)).expect("pool has workers");
+        let worker = match worker {
+            Some(i) => &self.workers[i % self.workers.len()],
+            None => self.workers.iter().min_by_key(|w| w.inflight.load(Ordering::Relaxed)).expect("pool has workers"),
+        };
         let id = self.next_id();
         if worker.tx.send(Job::Request { id, request, body, sink }).is_err() {
             return Err(DispatchError::NoResponse);
@@ -557,6 +579,8 @@ mod tests {
         c.set("c".into(), "3".into(), Duration::ZERO, vec![]);
         assert_eq!(c.get("a").as_deref(), Some("1"));
         assert_eq!(c.get("c"), None);
+        assert_eq!(c.keys(""), ["a", "b"]);
+        assert_eq!(c.keys("b"), ["b"]);
         c.invalidate("posts");
         assert_eq!(c.get("a"), None);
         assert_eq!(c.get("b"), None);

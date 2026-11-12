@@ -561,6 +561,11 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<HostState>) -> rquickjs::Result<()> {
     host.set("cacheGet", Function::new(ctx.clone(), move |key: String| s.shared.cache.lock().unwrap().get(&key))?)?;
     let s = st.clone();
     host.set(
+        "cacheKeys",
+        Function::new(ctx.clone(), move |prefix: String| s.shared.cache.lock().unwrap().keys(&prefix))?,
+    )?;
+    let s = st.clone();
+    host.set(
         "cacheSet",
         Function::new(ctx.clone(), move |key: String, value: String, ttl_ms: f64, tags: String| {
             let tags = tags.split(',').filter(|t| !t.is_empty()).map(str::to_string).collect();
