@@ -52,6 +52,91 @@ declare module "forge:ai" {
     start(source: AsyncIterable<string>): Promise<string>;
     stop(): void;
   };
+
+  export type Provider = "openai" | "anthropic" | "gemini" | "ollama" | "mock";
+  export type ToolCall = { id: string; name: string; arguments: Record<string, unknown> };
+  export type Message =
+    | { role: "system" | "user"; content: string }
+    | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
+    | { role: "tool"; content: string; toolCallId: string; name?: string };
+  export type ToolSpec = { name: string; description?: string; parameters?: Record<string, unknown> };
+  export type ChatEvent =
+    | { type: "text"; text: string }
+    | ({ type: "tool_call" } & ToolCall)
+    | { type: "usage"; input: number; output: number }
+    | { type: "done"; stop: string };
+  export type ChatOptions = {
+    provider?: Provider;
+    model?: string;
+    messages: Message[];
+    system?: string;
+    tools?: ToolSpec[];
+    apiKey?: string;
+    /** e.g. http://localhost:11434/v1 (Ollama, OpenAI-compatible), https://openrouter.ai/api/v1 */
+    baseUrl?: string;
+    temperature?: number;
+    maxTokens?: number;
+    signal?: AbortSignal;
+    headers?: Record<string, string>;
+    /** mock provider: milliseconds between words */
+    delay?: number;
+  };
+  export function chat(options: ChatOptions): AsyncIterable<ChatEvent> & {
+    text(): Promise<string>;
+    result(): Promise<{ text: string; toolCalls: ToolCall[]; usage: { input: number; output: number } | null; stop: string | null }>;
+  };
+  export type Tool<A = any> = { description?: string; parameters?: Record<string, unknown>; run(args: A, ctx: { signal?: AbortSignal }): unknown };
+  export function runAgent(
+    options: Omit<ChatOptions, "tools"> & { tools?: Record<string, Tool>; maxSteps?: number },
+  ): AsyncIterable<
+    | ChatEvent
+    | { type: "tool_result"; id: string; name: string; result: unknown }
+    | { type: "final"; text: string; messages: Message[]; steps: number; stop?: "max_steps" }
+  >;
+}
+
+declare module "forge:realtime" {
+  export type SocketStatus = "connecting" | "open" | "reconnecting" | "closed" | "offline";
+  export type SocketHandle = { send(message: unknown): boolean; close(code?: number, reason?: string): void; readonly status: SocketStatus };
+  /** Browser: a reconnecting JSON WebSocket to a socket route. */
+  export function connect(
+    path: string,
+    options?: {
+      onMessage?: (message: any, socket: SocketHandle) => void;
+      onOpen?: (socket: SocketHandle) => void;
+      onClose?: (event: CloseEvent) => void;
+      onStatus?: (status: SocketStatus) => void;
+      reconnect?: boolean;
+    },
+  ): SocketHandle;
+  /** React hook around connect(). */
+  export function useSocket(path: string | null, onMessage: (message: any, socket: SocketHandle) => void): { status: SocketStatus; send(message: unknown): boolean };
+  /** Server: send to every socket subscribed to a topic (any worker). Returns the number reached. */
+  export function publish(topic: string, message: unknown): number;
+  /** Server: number of sockets subscribed to a topic. */
+  export function subscribers(topic: string): number;
+}
+
+/** The socket passed to a route's `socket` handlers. */
+interface ForgeSocket<P extends Record<string, string> = Record<string, string>> {
+  id: number;
+  params: P;
+  url: URL;
+  /** Per-connection state. */
+  data: Record<string, any>;
+  send(message: unknown): boolean;
+  close(code?: number, reason?: string): void;
+  subscribe(topic: string): void;
+  unsubscribe(topic: string): void;
+  /** Send to every subscriber of `topic` except this socket. */
+  publish(topic: string, message: unknown): number;
+}
+
+/** `export const socket: ForgeSocketHandlers = { open, message, close }` in a route file. */
+interface ForgeSocketHandlers<P extends Record<string, string> = Record<string, string>> {
+  open?(ws: ForgeSocket<P>, ctx: ForgeContext<P>): void | Promise<void>;
+  message?(ws: ForgeSocket<P>, message: any, ctx: ForgeContext<P>): void | Promise<void>;
+  close?(ws: ForgeSocket<P>, code: number, reason: string): void | Promise<void>;
 }
 
 declare module "forge:game" {
@@ -75,6 +160,8 @@ interface ForgeContext<P extends Record<string, string> = Record<string, string>
   request: Request;
   /** Only variables listed in `server.env` of forge.config.json. */
   env: Record<string, string | undefined>;
+  /** Fires when the client disconnects or the request times out. */
+  signal: AbortSignal;
 }
 
 /** Context passed to vanilla pages' `mount(el, ctx)` / `render(ctx)`. */
