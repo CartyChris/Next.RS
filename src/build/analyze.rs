@@ -236,6 +236,55 @@ impl<'a> Visit<'a> for Scan<'_> {
     }
 }
 
+/// A `new URL("./relative", import.meta.url)` expression: byte range and specifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetUrl {
+    pub start: usize,
+    pub end: usize,
+    pub specifier: String,
+}
+
+/// Find every `new URL("./x" | "../x", import.meta.url)` in a module (workers, wasm, models…).
+pub fn find_asset_urls(file: &str, source: &str) -> Result<Vec<AssetUrl>> {
+    let allocator = Allocator::default();
+    let source_type = SourceType::from_path(Path::new(file)).unwrap_or_else(|_| SourceType::tsx());
+    let parsed = Parser::new(&allocator, source, source_type).parse();
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
+        bail!("{file}: syntax error");
+    }
+    struct Finder(Vec<AssetUrl>);
+    impl<'a> Visit<'a> for Finder {
+        fn visit_new_expression(&mut self, it: &NewExpression<'a>) {
+            let is_url = matches!(it.callee.without_parentheses(), Expression::Identifier(id) if id.name == "URL");
+            if is_url && it.arguments.len() == 2 {
+                let spec = match it.arguments[0].as_expression() {
+                    Some(Expression::StringLiteral(s)) => s.value.as_str().map(str::to_string),
+                    _ => None,
+                };
+                let base_is_meta_url = matches!(
+                    it.arguments[1].as_expression(),
+                    Some(Expression::StaticMemberExpression(m))
+                        if m.property.name == "url" && matches!(m.object.without_parentheses(), Expression::ImportMeta(_))
+                );
+                if let (Some(spec), true) = (spec, base_is_meta_url) {
+                    if spec.starts_with("./") || spec.starts_with("../") {
+                        self.0.push(AssetUrl {
+                            start: it.span.start as usize,
+                            end: it.span.end as usize,
+                            specifier: spec,
+                        });
+                        return;
+                    }
+                }
+            }
+            walk::walk_new_expression(self, it);
+        }
+    }
+    let mut finder = Finder(Vec::new());
+    finder.visit_program(&parsed.program);
+    Ok(finder.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +337,19 @@ mod tests {
     fn policy_can_allow_eval_but_never_internal_imports() {
         let a = analyze("a.js", "eval('1'); new Function('x'); import 'ext:x';", Policy { allow_eval: true }).unwrap();
         assert_eq!(a.violations.iter().map(|v| v.rule).collect::<Vec<_>>(), [Rule::InternalImport]);
+    }
+
+    #[test]
+    fn finds_asset_urls() {
+        let src = "const w = new Worker(new URL('./sim.worker.ts', import.meta.url), { type: 'module' });\n\
+                   const m = new URL(\"../models/net.onnx\", import.meta.url);\n\
+                   const skip1 = new URL('https://x', import.meta.url);\n\
+                   const skip2 = new URL('./a.js', location.href);\n\
+                   const skip3 = new URL(name, import.meta.url);";
+        let found = find_asset_urls("app/x.ts", src).unwrap();
+        let specs: Vec<_> = found.iter().map(|f| f.specifier.as_str()).collect();
+        assert_eq!(specs, ["./sim.worker.ts", "../models/net.onnx"]);
+        assert_eq!(&src[found[0].start..found[0].end], "new URL('./sim.worker.ts', import.meta.url)");
     }
 
     #[test]

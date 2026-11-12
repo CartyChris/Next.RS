@@ -15,13 +15,13 @@ use rolldown::{
     Bundler, BundlerOptions, InputItem, ModuleType, OutputFormat, Platform, RawMinifyOptions, SourceMapType, TsConfig,
     plugin::{
         HookLoadArgs, HookLoadOutput, HookLoadReturn, HookResolveIdArgs, HookResolveIdOutput, HookResolveIdReturn,
-        HookTransformArgs, HookTransformReturn, HookUsage, Plugin, PluginContext, SharedLoadPluginContext,
-        SharedTransformPluginContext,
+        HookTransformArgs, HookTransformOutput, HookTransformReturn, HookUsage, Plugin, PluginContext,
+        SharedLoadPluginContext, SharedTransformPluginContext,
     },
 };
 use rolldown_common::{Output, side_effects::HookSideEffects};
 
-use super::analyze::{Policy, Violation, analyze, is_internal_specifier};
+use super::analyze::{Policy, Violation, analyze, find_asset_urls, is_internal_specifier};
 
 pub const STATIC_PREFIX: &str = "/_forge/static/";
 
@@ -87,6 +87,12 @@ pub struct BundleSpec {
     pub scan: Option<Policy>,
     /// Modules under this directory are Forge's own and are never scanned.
     pub generated_dir: PathBuf,
+    /// Policy for worker scripts found in this build (they are scanned in their own build).
+    pub policy: Policy,
+    /// Nesting level of worker builds (workers that start workers).
+    pub depth: u8,
+    /// Emit a classic script (IIFE) instead of an ES module.
+    pub classic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +145,7 @@ impl Bundle {
 pub async fn bundle(spec: BundleSpec) -> Result<Bundle> {
     let state = Arc::new(Mutex::new(PluginState::default()));
     let plugin = ForgePlugin {
+        spec: Arc::new(spec.clone()),
         aliases: spec.aliases.iter().map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned())).collect(),
         side: spec.side,
         inline_assets: spec.inline_assets,
@@ -157,7 +164,7 @@ pub async fn bundle(spec: BundleSpec) -> Result<Bundle> {
         ),
         cwd: Some(spec.root.clone()),
         platform: Some(Platform::Browser),
-        format: Some(OutputFormat::Esm),
+        format: Some(if spec.classic { OutputFormat::Iife } else { OutputFormat::Esm }),
         entry_filenames: Some(
             if spec.side == Side::Server { "[name].js".to_string() } else { "[name].[hash].js".to_string() }.into(),
         ),
@@ -332,12 +339,15 @@ mod tests {
 #[derive(Debug, Default)]
 struct PluginState {
     css: HashMap<String, String>,
+    /// `new URL(...)` replacements already computed, by target file.
+    urls: HashMap<PathBuf, String>,
     assets: BTreeMap<String, Vec<u8>>,
     violations: Vec<Violation>,
 }
 
 #[derive(Debug)]
 struct ForgePlugin {
+    spec: Arc<BundleSpec>,
     aliases: HashMap<String, String>,
     side: Side,
     inline_assets: bool,
@@ -348,6 +358,77 @@ struct ForgePlugin {
 }
 
 impl ForgePlugin {
+    /// Public URL of an asset (or a data URL when inlining). Client builds record the file.
+    fn asset_url(&self, path: &Path, bytes: Vec<u8>) -> String {
+        let ext = extension(&path.to_string_lossy()).to_ascii_lowercase();
+        if self.inline_assets {
+            let mime = ASSET_EXTS.iter().find(|(e, _)| *e == ext).map_or("application/octet-stream", |(_, m)| m);
+            return format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes));
+        }
+        let name = format!("assets/{}.{}.{ext}", safe_stem(path), content_hash(&bytes));
+        let url = format!("{STATIC_PREFIX}{name}");
+        if self.side == Side::Client {
+            self.state.lock().unwrap().assets.insert(name, bytes);
+        }
+        url
+    }
+
+    /// The replacement for `new URL("./target", import.meta.url)`: scripts become separately
+    /// bundled worker files, anything else an asset; single-file builds inline both.
+    async fn url_expression(&self, target: &Path, importer: &str) -> anyhow::Result<String> {
+        let from = relative(Path::new(&self.root), importer);
+        let target =
+            target.canonicalize().map_err(|_| anyhow!("{from}: `new URL()` target {} not found", target.display()))?;
+        if let Some(done) = self.state.lock().unwrap().urls.get(&target) {
+            return Ok(done.clone());
+        }
+        let ext = extension(&target.to_string_lossy()).to_ascii_lowercase();
+        let script = matches!(ext.as_str(), "js" | "jsx" | "ts" | "tsx" | "mjs" | "mts");
+        let expr = if !script {
+            let url = self.asset_url(&target, std::fs::read(&target)?);
+            if self.inline_assets {
+                format!("new URL({})", serde_json::to_string(&url)?)
+            } else {
+                format!("new URL({}, import.meta.url)", serde_json::to_string(&url)?)
+            }
+        } else if self.side == Side::Server {
+            // Workers never run on the server; keep module evaluation from failing.
+            format!(
+                "new URL({}, import.meta.url)",
+                serde_json::to_string(&format!("{STATIC_PREFIX}workers/{}.js", safe_stem(&target)))?
+            )
+        } else {
+            if self.spec.depth >= 4 {
+                bail!("{from}: workers nested more than 4 levels deep");
+            }
+            let stem = safe_stem(&target);
+            let nested = BundleSpec {
+                inputs: vec![(stem.clone(), target.clone())],
+                split: false,
+                scan: Some(self.spec.policy),
+                depth: self.spec.depth + 1,
+                // file:// pages have an opaque origin: only classic workers start from Blob URLs.
+                classic: self.inline_assets,
+                ..(*self.spec).clone()
+            };
+            let built = Box::pin(bundle(nested))
+                .await
+                .map_err(|e| anyhow!("worker {}: {e}", relative(Path::new(&self.root), &target.to_string_lossy())))?;
+            let code = built.entry(&stem).map(|c| c.code.clone()).unwrap_or_default();
+            let mut state = self.state.lock().unwrap();
+            state.assets.extend(built.files);
+            if self.inline_assets {
+                format!("new URL(globalThis.__forgeWorkerUrl({}))", serde_json::to_string(&code)?)
+            } else {
+                let name = format!("workers/{stem}.{}.js", content_hash(code.as_bytes()));
+                state.assets.insert(name.clone(), code.into_bytes());
+                format!("new URL({}, import.meta.url)", serde_json::to_string(&format!("{STATIC_PREFIX}{name}"))?)
+            }
+        };
+        self.state.lock().unwrap().urls.insert(target, expr.clone());
+        Ok(expr)
+    }
+
     fn is_app_module(&self, id: &str) -> bool {
         id.starts_with(&self.root) && !id.contains("/node_modules/") && !id.starts_with(&self.generated_dir)
     }
@@ -419,23 +500,8 @@ impl Plugin for ForgePlugin {
                 ..Default::default()
             }));
         }
-        if let Some((_, mime)) = ASSET_EXTS.iter().find(|(e, _)| *e == ext) {
-            let bytes = std::fs::read(id)?;
-            let url = if self.inline_assets {
-                format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes))
-            } else {
-                let stem = Path::new(id).file_stem().and_then(|s| s.to_str()).unwrap_or("asset");
-                let stem: String = stem
-                    .chars()
-                    .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-                    .collect();
-                let name = format!("assets/{stem}.{}.{ext}", content_hash(&bytes));
-                let url = format!("{STATIC_PREFIX}{name}");
-                if self.side == Side::Client {
-                    self.state.lock().unwrap().assets.insert(name, bytes);
-                }
-                url
-            };
+        if ASSET_EXTS.iter().any(|(e, _)| *e == ext) {
+            let url = self.asset_url(Path::new(id), std::fs::read(id)?);
             let code = format!("export default {};", serde_json::to_string(&url)?);
             return Ok(Some(HookLoadOutput {
                 code: code.into(),
@@ -447,17 +513,49 @@ impl Plugin for ForgePlugin {
     }
 
     async fn transform(&self, _ctx: SharedTransformPluginContext, args: &HookTransformArgs<'_>) -> HookTransformReturn {
-        let Some(policy) = self.scan else { return Ok(None) };
-        if !self.is_app_module(args.id)
-            || !matches!(extension(args.id), "js" | "jsx" | "ts" | "tsx" | "mjs" | "mts" | "cjs" | "cts")
-        {
+        if !matches!(extension(args.id), "js" | "jsx" | "ts" | "tsx" | "mjs" | "mts" | "cjs" | "cts") {
             return Ok(None);
         }
-        let file = relative(Path::new(&self.root), args.id);
-        let analysis = analyze(&file, args.code, policy)?;
-        if !analysis.violations.is_empty() {
-            self.state.lock().unwrap().violations.extend(analysis.violations);
+        if let Some(policy) = self.scan.filter(|_| self.is_app_module(args.id)) {
+            let file = relative(Path::new(&self.root), args.id);
+            let analysis = analyze(&file, args.code, policy)?;
+            if !analysis.violations.is_empty() {
+                self.state.lock().unwrap().violations.extend(analysis.violations);
+            }
         }
-        Ok(None)
+        if !(args.code.contains("import.meta.url") && args.code.contains("URL")) {
+            return Ok(None);
+        }
+        // Syntax errors are left for Rolldown to report.
+        let Ok(found) = find_asset_urls(args.id, args.code) else { return Ok(None) };
+        if found.is_empty() {
+            return Ok(None);
+        }
+        let mut code = args.code.to_string();
+        let dir = Path::new(args.id).parent().unwrap_or(Path::new("/"));
+        let mut inline_worker = false;
+        for url in found.iter().rev() {
+            let replacement = self.url_expression(&dir.join(&url.specifier), args.id).await?;
+            inline_worker |= replacement.contains("__forgeWorkerUrl");
+            code.replace_range(url.start..url.end, &replacement);
+        }
+        if inline_worker {
+            // Installed before any statement of the module runs, so even the first `new Worker`
+            // (whose callee is resolved before its arguments) sees the patched constructor.
+            code.insert_str(
+                0,
+                &format!("globalThis.__forgeWorkerUrl ??= ({INLINE_WORKER_HELPER})(globalThis.Worker);\n"),
+            );
+        }
+        Ok(Some(HookTransformOutput { code: Some(code), ..Default::default() }))
     }
+}
+
+/// Single-file builds: turns worker source into a Blob URL, and lets `new Worker(url, { type: "module" })`
+/// start those (classic, self-contained) bundles from `file://`, where module workers are refused.
+const INLINE_WORKER_HELPER: &str = "(W) => { const urls = new Set(); if (W) globalThis.Worker = class extends W { constructor(u, o) { super(u, o && o.type === \"module\" && urls.has(String(u)) ? { ...o, type: \"classic\" } : o); } }; return (code) => { const u = URL.createObjectURL(new Blob([code], { type: \"text/javascript\" })); urls.add(u); return u; }; }";
+
+fn safe_stem(path: &Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("asset");
+    stem.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
 }

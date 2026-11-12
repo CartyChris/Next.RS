@@ -193,6 +193,10 @@ fn defines(project: &Project, server: bool) -> Vec<(String, String)> {
         ("import.meta.env.PROD".to_string(), (!dev).to_string()),
         ("import.meta.env.SSR".to_string(), server.to_string()),
     ];
+    if server {
+        // The server bundle is evaluated without a module URL; give relative `new URL()`s a base.
+        out.push(("import.meta.url".to_string(), "\"file:///forge/server.js\"".to_string()));
+    }
     out.extend(project.config.build.define.iter().map(|(k, v)| (k.clone(), v.clone())));
     out
 }
@@ -221,6 +225,9 @@ fn spec(project: &Project, input: (&str, &Path), side: Side) -> BundleSpec {
         aliases: aliases(&gen_dir, side),
         scan: (!client).then_some(Policy { allow_eval: project.config.security.allow_eval }),
         generated_dir: gen_dir,
+        policy: Policy { allow_eval: project.config.security.allow_eval },
+        depth: 0,
+        classic: false,
     }
 }
 

@@ -150,3 +150,77 @@ async fn wasm_host_is_reported_as_not_implemented() {
     assert!(err.to_string().contains("planned"));
     std::fs::remove_dir_all(root).ok();
 }
+
+const WORKER_PAGE: &str = r#"
+export function mount(el) {
+  const worker = new Worker(new URL("./lib/primes.worker.js", import.meta.url), { type: "module" });
+  worker.onmessage = async (e) => {
+    const bin = await (await fetch(new URL("./lib/table.bin", import.meta.url))).arrayBuffer();
+    el.innerHTML = `<p id="out">${e.data.count} primes, ${bin.byteLength} bytes</p>`;
+  };
+  worker.postMessage(1000);
+  return () => worker.terminate();
+}
+"#;
+
+const WORKER: &str = r#"
+import { isPrime } from "./math.js";
+const words = new URL("./words.txt", import.meta.url);
+self.onmessage = (e) => {
+  let count = 0;
+  for (let i = 2; i < e.data; i++) if (isPrime(i)) count++;
+  self.postMessage({ count, words: words.href.slice(0, 5) });
+};
+"#;
+
+fn worker_project(name: &str) -> std::path::PathBuf {
+    project(
+        name,
+        &[
+            ("app/page.js", WORKER_PAGE),
+            ("app/lib/primes.worker.js", WORKER),
+            (
+                "app/lib/math.js",
+                "export const isPrime = (n) => { for (let d = 2; d * d <= n; d++) if (n % d === 0) return false; return true; };",
+            ),
+            ("app/lib/words.txt", "hello"),
+            ("app/lib/table.bin", "0123456789"),
+        ],
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn workers_and_asset_urls_are_bundled() {
+    let root = worker_project("workers");
+    build(&root, Target::Server).await.unwrap();
+    let client = root.join(".forge/client");
+    let workers: Vec<_> = std::fs::read_dir(client.join("workers"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(workers.len(), 1, "{workers:?}");
+    assert!(workers[0].starts_with("primes_worker.") && workers[0].ends_with(".js"));
+    let worker_code = std::fs::read_to_string(client.join("workers").join(&workers[0])).unwrap();
+    assert!(worker_code.contains("isPrime") || worker_code.contains("postMessage"), "helper bundled into the worker");
+    assert!(!worker_code.contains("import "), "worker is self-contained");
+    let assets: Vec<_> = std::fs::read_dir(client.join("assets"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().into_string().unwrap())
+        .collect();
+    assert!(assets.iter().any(|a| a.starts_with("table.") && a.ends_with(".bin")), "{assets:?}");
+    assert!(assets.iter().any(|a| a.starts_with("words.") && a.ends_with(".txt")), "worker's own asset: {assets:?}");
+    let chunks = std::fs::read_dir(client.join("chunks"))
+        .unwrap()
+        .flatten()
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .collect::<String>();
+    assert!(chunks.contains(&format!("/_forge/static/workers/{}", workers[0])));
+
+    build(&root, Target::SingleHtml).await.unwrap();
+    let html = std::fs::read_to_string(root.join("dist/index.html")).unwrap();
+    assert!(html.contains("__forgeWorkerUrl"), "worker inlined as a blob");
+    assert!(html.contains("data:application/octet-stream;base64,MDEyMzQ1Njc4OQ=="), "asset inlined");
+    std::fs::remove_dir_all(root).ok();
+}
