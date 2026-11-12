@@ -223,7 +223,8 @@ fn spec(project: &Project, input: (&str, &Path), side: Side) -> BundleSpec {
         inline_assets: project.target == Target::SingleHtml,
         define: defines(project, !client),
         aliases: aliases(&gen_dir, side),
-        scan: (!client).then_some(Policy { allow_eval: project.config.security.allow_eval }),
+        // Both builds scan: client-only pages are never imported by the server bundle.
+        scan: Some(Policy { allow_eval: project.config.security.allow_eval }),
         generated_dir: gen_dir,
         policy: Policy { allow_eval: project.config.security.allow_eval },
         depth: 0,
@@ -312,6 +313,16 @@ fn manifest(project: &Project, plan: &Plan, build_id: &str, client: ClientAssets
 }
 
 /// Write the client bundle into `dir` (wiped first) and describe it for the manifest.
+/// Server-only assets (imported by a loader or API route) are served from the client directory too.
+fn with_server_assets(mut client: Bundle, server: &Bundle) -> Bundle {
+    for (name, bytes) in &server.files {
+        if !client.files.iter().any(|(n, _)| n == name) {
+            client.files.push((name.clone(), bytes.clone()));
+        }
+    }
+    client
+}
+
 fn write_client(dir: &Path, client: &Bundle, generated: &generated::Generated) -> Result<(ClientAssets, Vec<String>)> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir)?;
@@ -369,7 +380,10 @@ async fn build_server(
     build_id: &str,
 ) -> Result<BuildResult> {
     let out_dir = project.out_dir();
-    let client = bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?;
+    let client = with_server_assets(
+        bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?,
+        server,
+    );
     let (assets, client_files) = write_client(&out_dir.join("client"), &client, generated)?;
     std::fs::create_dir_all(out_dir.join("server"))?;
     std::fs::write(out_dir.join("server/server.js"), server_code.as_bytes())?;
@@ -499,6 +513,16 @@ async fn concrete_paths(pool: &Pool, route: &RouteEntry) -> Result<Vec<(String, 
     Ok(out)
 }
 
+/// Is `route` the one that serves `pathname`? A `staticParams()` entry such as `archive` for
+/// `/blog/[slug]` is shadowed by a static `/blog/archive` page and must not overwrite it.
+fn owns(routes: &[RouteEntry], route: &RouteEntry, pathname: &str) -> bool {
+    let Some(parts) = routes::split_path(pathname) else { return false };
+    routes
+        .iter()
+        .find(|r| r.kind == RouteKind::Page && routes::match_segments(&r.segments, &parts).is_some())
+        .is_some_and(|r| r.id == route.id)
+}
+
 fn output_path(dist: &Path, pathname: &str, file: &str) -> PathBuf {
     let mut p = dist.to_path_buf();
     for part in pathname.split('/').filter(|s| !s.is_empty()) {
@@ -535,7 +559,10 @@ async fn build_static(
 ) -> Result<BuildResult> {
     let dist = project.dist_dir();
     let _ = std::fs::remove_dir_all(&dist);
-    let client = bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?;
+    let client = with_server_assets(
+        bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?,
+        server,
+    );
     let (assets, client_files) = write_client(&dist.join("_forge/static"), &client, generated)?;
     let manifest = manifest(project, plan, build_id, assets);
     let mut artifacts: Vec<(PathBuf, u64)> = Vec::new();
@@ -550,7 +577,9 @@ async fn build_static(
     let mut jobs = Vec::new();
     for route in manifest.routes.iter().filter(|r| r.kind == RouteKind::Page) {
         for (path, params) in concrete_paths(&pool, route).await? {
-            jobs.push((route.clone(), path, params));
+            if owns(&manifest.routes, route, &path) {
+                jobs.push((route.clone(), path, params));
+            }
         }
     }
     let rendered: Vec<Result<Files>> = futures_util::stream::iter(jobs)
@@ -668,6 +697,9 @@ async fn build_single(
     if let Some(pool) = &pool {
         for route in plan.routes.iter().filter(|r| r.loader) {
             for (path, params) in concrete_paths(pool, route).await? {
+                if !owns(&plan.routes, route, &path) {
+                    continue;
+                }
                 let (_, body, _) = call(pool, "data", &route.id, &path, &params).await?;
                 let payload: Value = serde_json::from_slice(&body)?;
                 if let Some(d) = payload.get("data") {

@@ -101,6 +101,8 @@ struct PageCache {
     max: usize,
     entries: Mutex<HashMap<String, CachedPage>>,
     refreshing: Mutex<std::collections::HashSet<String>>,
+    /// Bumped by every invalidation: a render that started before one must not be stored.
+    epoch: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Clone)]
@@ -114,16 +116,28 @@ struct CachedPage {
 
 impl PageCache {
     fn new(max: usize) -> Self {
-        Self { max, entries: Mutex::new(HashMap::new()), refreshing: Mutex::new(Default::default()) }
+        Self {
+            max,
+            entries: Mutex::new(HashMap::new()),
+            refreshing: Mutex::new(Default::default()),
+            epoch: Default::default(),
+        }
     }
     fn get(&self, key: &str) -> Option<CachedPage> {
         self.entries.lock().unwrap().get(key).cloned()
     }
-    fn put(&self, key: String, page: CachedPage) {
+    fn epoch(&self) -> u64 {
+        self.epoch.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// Store a page rendered when the cache was at `epoch`, unless something was invalidated since.
+    fn put(&self, key: String, page: CachedPage, epoch: u64) {
         if self.max == 0 {
             return;
         }
         let mut entries = self.entries.lock().unwrap();
+        if self.epoch() != epoch {
+            return;
+        }
         if entries.len() >= self.max && !entries.contains_key(&key) {
             if let Some(oldest) = entries.iter().min_by_key(|(_, p)| p.stored).map(|(k, _)| k.clone()) {
                 entries.remove(&oldest);
@@ -134,6 +148,7 @@ impl PageCache {
     /// `"/blog/x"` drops that path (any query), `"/blog/*"` a subtree, `"*"` everything.
     fn invalidate(&self, key: &str) {
         let mut entries = self.entries.lock().unwrap();
+        self.epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if key == "*" {
             entries.clear();
         } else if let Some(prefix) = key.strip_suffix("/*") {
@@ -494,6 +509,7 @@ async fn page(app: &Arc<App>, route: &RouteEntry, params: routes::Params, req: P
         }
     }
     let stream = route.streaming && !cacheable && !is_bot(&req.headers);
+    let epoch = app.pages.epoch();
     match render_page(app, &route.id, &params, &req.uri, &req.headers, stream, dev).await {
         Err(resp) => *resp,
         Ok(PageOut::Raw { status, body, headers }) => raw_response(status, body, headers),
@@ -506,6 +522,7 @@ async fn page(app: &Arc<App>, route: &RouteEntry, params: routes::Params, req: P
                 app.pages.put(
                     key,
                     CachedPage { status: 200, body: bytes.clone(), csp: csp.clone(), stored: Instant::now(), ttl },
+                    epoch,
                 );
                 let mut r = html_response(status, Body::from(bytes), csp.as_deref());
                 r.headers_mut().insert("x-forge-cache", HeaderValue::from_static("MISS"));
@@ -528,12 +545,17 @@ fn refresh_in_background(
         return;
     }
     tokio::spawn(async move {
+        let epoch = app.pages.epoch();
         if let Ok(PageOut::Html { status: StatusCode::OK, body, csp }) =
             render_page(&app, &route.id, &params, &uri, &headers, false, false).await
         {
             if let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await {
                 let ttl = Duration::from_secs_f64(route.revalidate.unwrap_or(0.0));
-                app.pages.put(key.clone(), CachedPage { status: 200, body: bytes, csp, stored: Instant::now(), ttl });
+                app.pages.put(
+                    key.clone(),
+                    CachedPage { status: 200, body: bytes, csp, stored: Instant::now(), ttl },
+                    epoch,
+                );
             }
         }
         app.pages.refreshing.lock().unwrap().remove(&key);
@@ -599,7 +621,8 @@ async fn data(app: &Arc<App>, req: Parts) -> Response {
         return json_response(StatusCode::OK, Bytes::from_static(br#"{"data":null}"#), None);
     }
     let host = req.headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
-    let url = format!("http://{host}{pathname}{}{search}", if search.is_empty() { "" } else { "?" });
+    let proto = req.headers.get("x-forwarded-proto").and_then(|h| h.to_str().ok()).unwrap_or("http");
+    let url = format!("{proto}://{host}{pathname}{}{search}", if search.is_empty() { "" } else { "?" });
     let headers = header_list(&req.headers);
     let request = render::Request {
         kind: "data",
@@ -691,7 +714,7 @@ mod tests {
     fn page_cache_invalidation() {
         let c = PageCache::new(10);
         for k in ["/", "/blog", "/blog/a", "/blog/a?x=1", "/blogger"] {
-            c.put(k.into(), page(k));
+            c.put(k.into(), page(k), c.epoch());
         }
         c.invalidate("/blog/a");
         assert!(c.get("/blog/a").is_none() && c.get("/blog/a?x=1").is_none() && c.get("/blog").is_some());
@@ -702,12 +725,23 @@ mod tests {
     }
 
     #[test]
+    fn renders_that_straddle_an_invalidation_are_not_stored() {
+        let c = PageCache::new(10);
+        let started = c.epoch();
+        c.invalidate("/blog/a"); // a mutation lands while the render is in flight
+        c.put("/blog/a".into(), page("stale"), started);
+        assert!(c.get("/blog/a").is_none());
+        c.put("/blog/a".into(), page("fresh"), c.epoch());
+        assert!(c.get("/blog/a").is_some());
+    }
+
+    #[test]
     fn page_cache_evicts_oldest() {
         let c = PageCache::new(2);
-        c.put("/a".into(), page("a"));
+        c.put("/a".into(), page("a"), c.epoch());
         std::thread::sleep(Duration::from_millis(2));
-        c.put("/b".into(), page("b"));
-        c.put("/c".into(), page("c"));
+        c.put("/b".into(), page("b"), c.epoch());
+        c.put("/c".into(), page("c"), c.epoch());
         assert!(c.get("/a").is_none() && c.get("/b").is_some() && c.get("/c").is_some());
     }
 }

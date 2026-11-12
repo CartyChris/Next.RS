@@ -102,6 +102,11 @@ pub async fn serve_public(dir: &Path, path: &str, headers: &HeaderMap) -> Option
 async fn serve_file(dir: &Path, rel: &str, headers: &HeaderMap, immutable: bool) -> Option<Response> {
     let path = safe_join(dir, rel)?;
     let meta = tokio::fs::metadata(&path).await.ok().filter(|m| m.is_file())?;
+    // A symlink inside the directory must not expose files outside it.
+    let (real, root) = (tokio::fs::canonicalize(&path).await.ok()?, tokio::fs::canonicalize(dir).await.ok()?);
+    if !real.starts_with(&root) {
+        return None;
+    }
     let etag = format!(
         "\"{:x}-{:x}\"",
         meta.len(),

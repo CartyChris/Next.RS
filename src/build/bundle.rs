@@ -367,9 +367,8 @@ impl ForgePlugin {
         }
         let name = format!("assets/{}.{}.{ext}", safe_stem(path), content_hash(&bytes));
         let url = format!("{STATIC_PREFIX}{name}");
-        if self.side == Side::Client {
-            self.state.lock().unwrap().assets.insert(name, bytes);
-        }
+        // Recorded on both sides: a loader or API route may be the only importer.
+        self.state.lock().unwrap().assets.insert(name, bytes);
         url
     }
 

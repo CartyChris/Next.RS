@@ -55,6 +55,24 @@ pub fn escape_inline_script(code: &str) -> String {
     out
 }
 
+/// Make CSS safe inside `<style>`: HTML ends the element at `</style` in any letter case.
+/// `<\/` is a valid CSS escape for `</` inside strings and selectors.
+pub fn escape_inline_style(css: &str) -> String {
+    let bytes = css.as_bytes();
+    let mut out = String::with_capacity(css.len());
+    let mut last = 0;
+    for (at, _) in css.match_indices('<') {
+        let rest = &bytes[at..];
+        if rest.len() >= 7 && rest[1] == b'/' && rest[2..7].eq_ignore_ascii_case(b"style") {
+            out.push_str(&css[last..at]);
+            out.push_str("<\\/");
+            last = at + 2;
+        }
+    }
+    out.push_str(&css[last..]);
+    out
+}
+
 fn memchr_lt(b: &[u8]) -> Option<usize> {
     b.iter().position(|&c| c == b'<')
 }
@@ -151,7 +169,7 @@ impl SingleFile<'_> {
             self.head_tags
         );
         if !self.css.is_empty() {
-            let _ = write!(out, "<style>{}</style>", self.css.replace("</style", "<\\/style"));
+            let _ = write!(out, "<style>{}</style>", escape_inline_style(self.css));
         }
         let _ = write!(out, r#"<script type="application/json" id="{DATA_ID}">{}</script>"#, self.boot);
         let _ = write!(out, r#"</head><body><div id="{ROOT_ID}">{}</div>"#, self.body);
@@ -210,6 +228,14 @@ mod tests {
         assert_eq!(escape_inline_script("x='<!-- y'"), r"x='<\!-- y'");
         assert_eq!(escape_inline_script("if (a<b) c</scrip;"), "if (a<b) c</scrip;");
         assert_eq!(escape_inline_script("ünïcödé</script"), r"ünïcödé<\/script");
+    }
+
+    #[test]
+    fn inline_style_escaping() {
+        let css = "a{content:'</style><script>x</script>'} b{content:'</STYLE >'} c{}";
+        let out = escape_inline_style(css);
+        assert!(!out.to_ascii_lowercase().contains("</style"), "{out}");
+        assert_eq!(escape_inline_style("a{color:red}"), "a{color:red}");
     }
 
     #[test]

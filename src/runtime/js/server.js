@@ -24,7 +24,8 @@ export function createServer({ routes, apis, notFound, renderers, dev, links = "
   if (notFound) pages.set(notFound.id, notFound);
   const apiById = new Map(apis.map((a) => [a.id, a]));
   renderers = {
-    vanilla: async (state) => (await state.mod.page.render?.({ params: state.params, data: state.data, pathname: state.pathname })) ?? "",
+    vanilla: async (state) =>
+      (await state.mod.page.render?.({ params: state.params, data: state.data, pathname: state.pathname, search: state.search })) ?? "",
     ...renderers,
   };
 
@@ -59,7 +60,8 @@ export function createServer({ routes, apis, notFound, renderers, dev, links = "
     const ssr = !!route.mod;
     const boot = scriptJson({ schemaVersion: 1, route: route.id, params, data: res.data, pathname: req.pathname, ssr });
     if (!ssr) return out.head({ status, page: { meta: {}, boot, route: route.id, ssr } });
-    const state = { route: route.id, kind: route.kind, params, data: res.data, pathname: req.pathname, search: "", mod: route.mod };
+    const search = new URL(req.url).search;
+    const state = { route: route.id, kind: route.kind, params, data: res.data, pathname: req.pathname, search, mod: route.mod };
     const meta = resolveMeta([...route.mod.layouts, route.mod.page], state);
     // Render the shell first: if it throws we can still answer with a clean 500.
     const body = await renderers[route.kind](state, { nonce: req.nonce, stream: req.stream, signal });

@@ -253,3 +253,40 @@ async fn web_platform_apis_in_server_code() {
     assert_eq!(v["b64"], "hi!");
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_regressions_server() {
+    let root = project(
+        "review",
+        &[
+            ("app/page.js", "export const render = ({ search }) => `<p id=q>${search}</p>`;"),
+            (
+                "app/loader.js",
+                "import logo from './logo.svg';\nexport const loader = ({ url }) => ({ scheme: url.protocol, logo });",
+            ),
+            ("app/logo.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>"),
+            ("public/ok.txt", "public file"),
+        ],
+    );
+    let outside = root.with_extension("secret");
+    std::fs::write(&outside, "do not serve").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, root.join("public/leak.txt")).unwrap();
+    let app = serve(&root).await;
+
+    // The query string reaches server rendering.
+    assert!(get(&app, "/?q=rust").await.body.contains("<p id=q>?q=rust</p>"));
+    // Loader URLs keep the forwarded scheme on the data endpoint too.
+    let data = request(&app, Method::GET, "/_forge/data?path=/", &[("x-forwarded-proto", "https")], "").await;
+    assert!(data.body.contains(r#""scheme":"https:""#), "{}", data.body);
+    // An asset imported only by server code is still served.
+    let v: serde_json::Value = serde_json::from_str(&data.body).unwrap();
+    let logo = v["data"]["logo"].as_str().unwrap().to_string();
+    assert_eq!(get(&app, &logo).await.status, StatusCode::OK, "{logo}");
+    // public/ symlinks cannot reach outside the directory.
+    assert_eq!(get(&app, "/ok.txt").await.status, StatusCode::OK);
+    #[cfg(unix)]
+    assert_eq!(get(&app, "/leak.txt").await.status, StatusCode::NOT_FOUND);
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_file(outside).ok();
+}

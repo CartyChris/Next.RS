@@ -224,3 +224,33 @@ async fn workers_and_asset_urls_are_bundled() {
     assert!(html.contains("data:application/octet-stream;base64,MDEyMzQ1Njc4OQ=="), "asset inlined");
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_regressions_build() {
+    // A staticParams() entry shadowed by a static page must not overwrite it.
+    let root = project(
+        "shadow",
+        &[
+            ("app/page.js", "export const render = () => 'home';"),
+            ("app/blog/archive/page.js", "export const render = () => '<h1>Archive page</h1>';"),
+            ("app/blog/[slug]/page.js", "export const render = ({ data }) => `<h1>Post ${data.slug}</h1>`;"),
+            (
+                "app/blog/[slug]/loader.js",
+                "export const loader = ({ params }) => ({ slug: params.slug });\nexport const staticParams = () => [{ slug: 'archive' }, { slug: 'one' }];",
+            ),
+        ],
+    );
+    build(&root, Target::Static).await.unwrap();
+    let archive = std::fs::read_to_string(root.join("dist/blog/archive/index.html")).unwrap();
+    assert!(archive.contains("<h1>Archive page</h1>"), "{archive}");
+    assert!(std::fs::read_to_string(root.join("dist/blog/one/index.html")).unwrap().contains("<h1>Post one</h1>"));
+    assert!(!root.join("dist/_forge/data/blog/archive.json").exists());
+    std::fs::remove_dir_all(root).ok();
+
+    // Client-only pages are scanned even though the server bundle never imports them.
+    let root =
+        project("csr-eval", &[("app/page.js", "export const ssr = false;\nexport function mount() { eval('1'); }")]);
+    let err = build(&root, Target::Server).await.map(|_| ()).unwrap_err();
+    assert!(format!("{err:#}").contains("`eval` is denied"), "{err:#}");
+    std::fs::remove_dir_all(root).ok();
+}
