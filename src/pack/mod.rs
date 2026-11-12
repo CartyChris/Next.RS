@@ -434,6 +434,59 @@ pub async fn run(input: &Path, output: Option<&Path>, options: Options) -> Resul
     Ok(summary)
 }
 
+/// `forge pack --watch`: repack on every change next to the input and serve the result with
+/// live reload. The output file itself (and other packed files) never trigger a repack.
+pub async fn watch(
+    input: PathBuf,
+    output: Option<PathBuf>,
+    options: Options,
+    addr: std::net::SocketAddr,
+) -> Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    println!("forge pack --watch → http://{}", listener.local_addr()?);
+    watch_on(input, output, options, listener).await
+}
+
+pub async fn watch_on(
+    input: PathBuf,
+    output: Option<PathBuf>,
+    options: Options,
+    listener: tokio::net::TcpListener,
+) -> Result<()> {
+    let input = input.canonicalize().with_context(|| format!("{} not found", input.display()))?;
+    let dir = input.parent().context("input has no directory")?.to_path_buf();
+    let out = Arc::new(Mutex::new(output.clone()));
+    let (filter_dir, filter_out) = (dir.clone(), out.clone());
+    let filter = move |p: &Path| {
+        let Ok(rel) = p.strip_prefix(&filter_dir) else { return false };
+        let ignored = rel.components().any(|c| {
+            let c = c.as_os_str().to_string_lossy();
+            c.starts_with('.')
+                || c.ends_with('~')
+                || c.ends_with(".swp")
+                || ["node_modules", "dist", "target"].contains(&c.as_ref())
+        });
+        let is_output = filter_out.lock().unwrap().as_deref().is_some_and(|o| o == p)
+            || p.to_string_lossy().ends_with(".packed.html");
+        !ignored && !is_output
+    };
+    let roots = vec![(dir.clone(), notify::RecursiveMode::Recursive)];
+    crate::server::single::run(listener, roots, filter, move || {
+        let (input, options, out) = (input.clone(), options.clone(), out.clone());
+        let output = out.lock().unwrap().clone();
+        async move {
+            let summary = run(&input, output.as_deref(), options).await?;
+            for w in &summary.warnings {
+                eprintln!("warn: {w}");
+            }
+            // Remember where it went, so writing it does not trigger another pack.
+            *out.lock().unwrap() = Some(summary.output.canonicalize().unwrap_or(summary.output.clone()));
+            Ok(std::fs::read_to_string(&summary.output)?)
+        }
+    })
+    .await
+}
+
 fn stem(path: &Path) -> String {
     path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "page".into())
 }

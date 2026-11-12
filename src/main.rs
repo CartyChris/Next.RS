@@ -42,6 +42,9 @@ enum Command {
         port: Option<u16>,
         #[arg(long)]
         host: Option<String>,
+        /// server (SSR, default) | single-html (serve the real single file, rebuilt on save)
+        #[arg(long, short, default_value = "server")]
+        target: Target,
     },
     /// Production build.
     Build {
@@ -99,6 +102,12 @@ enum Command {
         /// npm registry (default: $FORGE_NPM_REGISTRY, $npm_config_registry, or registry.npmjs.org).
         #[arg(long)]
         registry: Option<String>,
+        /// Repack on every change and serve the result with live reload.
+        #[arg(long, short)]
+        watch: bool,
+        /// Port for --watch (default 3000).
+        #[arg(long, short)]
+        port: Option<u16>,
     },
 }
 
@@ -157,9 +166,15 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("(The vanilla template has no npm dependencies; `npm install` is optional.)");
             }
         }
-        Command::Dev { root, port, host } => {
+        Command::Dev { root, port, host, target } => {
             let project = Project::load(&root, Target::Server, Mode::Dev)?;
-            server::dev::run(project.root.clone(), addr(&project, host, port)?).await?;
+            match target {
+                Target::SingleHtml => {
+                    server::single::run_project(project.root.clone(), addr(&project, host, port)?).await?
+                }
+                Target::Server => server::dev::run(project.root.clone(), addr(&project, host, port)?).await?,
+                other => anyhow::bail!("forge dev serves the server or single-html target, not {}", other.as_str()),
+            }
         }
         Command::Build { root, target, dev } => {
             let project = Project::load(&root, target, if dev { Mode::Dev } else { Mode::Prod })?;
@@ -205,7 +220,19 @@ async fn run(cli: Cli) -> Result<()> {
             server.serve(addr).await?;
         }
         #[cfg(feature = "pack")]
-        Command::Pack { input, output, title, tailwind, no_tailwind, compress, no_minify, offline, registry } => {
+        Command::Pack {
+            input,
+            output,
+            title,
+            tailwind,
+            no_tailwind,
+            compress,
+            no_minify,
+            offline,
+            registry,
+            watch,
+            port,
+        } => {
             let compress = match compress.as_str() {
                 "auto" => nextrs::config::Compress::Auto,
                 "on" | "true" => nextrs::config::Compress::On,
@@ -223,6 +250,10 @@ async fn run(cli: Cli) -> Result<()> {
                 nextrs::pack::Options { compress, minify: !no_minify, offline, tailwind, title, ..Default::default() };
             if let Some(r) = registry {
                 options.registry = r;
+            }
+            if watch {
+                let port = port.or_else(|| std::env::var("PORT").ok()?.parse().ok()).unwrap_or(3000);
+                return nextrs::pack::watch(input, output, options, SocketAddr::from(([127, 0, 0, 1], port))).await;
             }
             let started = std::time::Instant::now();
             let s = nextrs::pack::run(&input, output.as_deref(), options).await?;

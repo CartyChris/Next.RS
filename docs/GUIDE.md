@@ -283,6 +283,7 @@ forge build --target single-html   # dist/index.html: one self-contained file
 | Assets | hashed files | hashed files | data URLs |
 
 Single-html details:
+- `forge dev --target single-html` develops against the real artifact: every save rebuilds the single file (uncompressed, unminified), `/` serves it with live reload, and build errors show in the page. Hash routing, embedded loader data and inlined assets behave exactly as in the shipped file.
 - The `/` route is prerendered into the file, so content shows before the script runs.
 - The script is compressed automatically once it is over 16 kB (`"build": { "compress": "auto" }`, the default; `true` / `false` force it). It is deflated and stored as base-122 text (7 bits per byte, against base64's 6), then inflated with `DecompressionStream` and imported as the same ES module. The examples' files come out 64–71% smaller: React 235 → 85 kB, three.js game 504 → 145 kB, Forge Arena 802 → 257 kB.
 - `public/` is not included; import assets from code so they are inlined.
@@ -324,6 +325,7 @@ export default function Notes() {
 forge pack demo.html                 # → demo.packed.html
 forge pack demo.html -o dist/app.html --compress on
 forge pack demo.html --offline       # only the package and download caches
+forge pack demo.html --watch         # repack on save, serve it at :3000 with live reload
 ```
 
 - **CDN URLs become npm packages.** unpkg, jsDelivr, esm.sh, Skypack, jspm and esm.run URLs are fetched from the npm registry (`FORGE_NPM_REGISTRY` or `--registry` to change it), verified against the registry's sha512 integrity, and cached in `~/.cache/forge` (`FORGE_CACHE_DIR`). A pinned file is that file; a package URL resolves like an import. Anything else is downloaded over HTTP.

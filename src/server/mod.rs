@@ -12,6 +12,7 @@
 
 pub mod dev;
 mod files;
+pub mod single;
 mod socket;
 
 use std::{

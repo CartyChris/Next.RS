@@ -23,7 +23,7 @@ const IGNORED: &[&str] = &["node_modules", ".forge", "dist", ".git", "target"];
 const ROOT_FILES: &[&str] = &["forge.config.json", "package.json", "tsconfig.json", "jsconfig.json", ".env"];
 
 /// Does a change to `path` require a rebuild?
-fn relevant(root: &Path, path: &Path) -> bool {
+pub(crate) fn relevant(root: &Path, path: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(root) else { return false };
     let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
     match parts.as_slice() {
@@ -82,7 +82,13 @@ pub fn live_events(server: &Server) -> Response {
     let Some(rx) = server.subscribe() else {
         return Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()).unwrap();
     };
-    let hello = format!("event: hello\ndata: {}\n\n", server.build_id());
+    live_stream(rx, server.build_id())
+}
+
+/// Server-sent events for live reload: `hello` with the current build id, then `reload`
+/// with each new one (the page reloads when the id changes), and keep-alives.
+pub(crate) fn live_stream(rx: tokio::sync::broadcast::Receiver<String>, current: String) -> Response {
+    let hello = format!("event: hello\ndata: {current}\n\n");
     let state = (Some(hello), rx);
     let stream = futures_util::stream::unfold(state, |(hello, mut rx)| async move {
         if let Some(h) = hello {
@@ -132,7 +138,7 @@ fn fail(server: &Server, e: anyhow::Error) {
     server.set_error(msg);
 }
 
-fn watch_roots(root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+pub(crate) fn watch_roots(root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
     let mut out = vec![(root.to_path_buf(), RecursiveMode::NonRecursive)];
     if let Ok(entries) = std::fs::read_dir(root) {
         for e in entries.flatten() {
@@ -145,6 +151,38 @@ fn watch_roots(root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
     out
 }
 
+/// Watch `roots`; every change `filter` accepts (coalesced) wakes the returned receiver.
+/// Keep the watcher alive as long as the receiver is used.
+pub(crate) fn watch(
+    roots: Vec<(PathBuf, RecursiveMode)>,
+    filter: impl Fn(&Path) -> bool + Send + 'static,
+) -> Result<(notify::RecommendedWatcher, tokio::sync::mpsc::Receiver<()>)> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(event) = res else { return };
+        if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
+            return;
+        }
+        if event.paths.iter().any(|p| filter(p)) {
+            let _ = tx.try_send(());
+        }
+    })?;
+    for (path, mode) in roots {
+        let _ = watcher.watch(&path, mode);
+    }
+    Ok((watcher, rx))
+}
+
+/// Wait for the next batch of changes: let editors finish their write-rename dance, then coalesce.
+pub(crate) async fn next_change(rx: &mut tokio::sync::mpsc::Receiver<()>) -> bool {
+    if rx.recv().await.is_none() {
+        return false;
+    }
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    while rx.try_recv().is_ok() {}
+    true
+}
+
 pub async fn run(root: PathBuf, addr: SocketAddr) -> Result<()> {
     let root = root.canonicalize()?;
     let server = Server::new(true);
@@ -152,28 +190,12 @@ pub async fn run(root: PathBuf, addr: SocketAddr) -> Result<()> {
     println!("forge dev → http://{}", listener.local_addr()?);
     rebuild(&server, &root).await;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
     let watch_root = root.clone();
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        let Ok(event) = res else { return };
-        if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
-            return;
-        }
-        if event.paths.iter().any(|p| relevant(&watch_root, p)) {
-            let _ = tx.try_send(());
-        }
-    })?;
-    for (path, mode) in watch_roots(&root) {
-        let _ = watcher.watch(&path, mode);
-    }
-
+    let (watcher, mut rx) = watch(watch_roots(&root), move |p| relevant(&watch_root, p))?;
     let s = server.clone();
     tokio::spawn(async move {
         let _watcher = watcher;
-        while rx.recv().await.is_some() {
-            // Let editors finish their write-rename dance, then coalesce.
-            tokio::time::sleep(Duration::from_millis(60)).await;
-            while rx.try_recv().is_ok() {}
+        while next_change(&mut rx).await {
             rebuild(&s, &root).await;
         }
     });
