@@ -20,13 +20,22 @@ const PALETTE = [
 type Art = { palette: string[]; pixels: number[] };
 type Tool = "pen" | "fill" | "erase";
 
-// The starter sprite: a heart from (x² + y² - 1)³ - x²y³ ≤ 0.
+// The starter sprite: a heart from (x² + y² - 1)³ - x²y³ ≤ 0, with a dark outline, a
+// darker lower half and a small shine.
 function heart(): number[] {
+  const inside = (i: number) => {
+    const x = ((i % N) - 15.5) / 10.5;
+    const y = (15 - Math.floor(i / N)) / 10.5 + 0.2;
+    return (x * x + y * y - 1) ** 3 - x * x * y ** 3 <= 0;
+  };
+  const shine = new Set([9 * N + 9, 9 * N + 10, 10 * N + 8, 10 * N + 9, 11 * N + 8]);
   return Array.from({ length: N * N }, (_, i) => {
-    const x = ((i % N) - 15.5) / 11;
-    const y = (15.5 - Math.floor(i / N)) / 11 + 0.15;
-    const v = (x * x + y * y - 1) ** 3 - x * x * y ** 3;
-    return v <= 0 ? (v > -0.02 ? 0 : x < -0.25 && y > 0.35 ? 4 : 2) : EMPTY;
+    if (!inside(i)) return EMPTY;
+    const x = i % N;
+    const edge = [i - 1, i + 1, i - N, i + N].some((j) => j < 0 || j >= N * N || Math.abs((j % N) - x) > 1 || !inside(j));
+    if (edge) return 0;
+    if (shine.has(i)) return 12;
+    return Math.floor(i / N) > 19 ? 1 : 2;
   });
 }
 

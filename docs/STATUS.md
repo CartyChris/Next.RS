@@ -53,6 +53,12 @@ Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ repla
 | `forge:ai` `chat()` / `runAgent()` across OpenAI-compatible, Anthropic, Gemini, Ollama | `js/ai.js` | `tests/ai.rs` (fake servers per protocol) |
 | `forge:cache` key-value API (`get`/`set`/`keys`) | `js/cache.*.js`, `runtime/mod.rs` | unit + arena |
 | Proof-of-life app: Forge Arena | `examples/arena` | `tests/react.rs`, `tests/browser/smoke.mjs` |
+| Automatic single-file compression (deflate + base-122) | `build/html.rs` | unit (round trip, script safety), Chromium from `file://` |
+| `forge:file`: open/save/drop, self-saving single files (`useDocument`, `saveSelf`) | `js/file.js`, `js/client.js` | `tests/build.rs`, Pixel Pad browser checks (byte-identical re-save) |
+| `forge pack` for HTML pages: CDN → npm (verified), import maps, inline + compressed in-place scripts/styles, `text/babel` ahead of time | `src/pack/` | unit tests, `tests/pack.rs` (fake registry + web server), Chromium with network blocked |
+| `forge pack` for component files (React, Preact, `mount(el)`, Tailwind) | `pack/component.rs` | `tests/pack.rs`, Chromium (React 19 + lucide-react + Tailwind offline) |
+| `forge dev --target single-html`, `forge pack --watch` | `server/single.rs` | `tests/single_dev.rs` |
+| Proof-of-life app: Pixel Pad | `examples/pixel` | browser checks |
 
 ## The 8D fixture, file by file
 

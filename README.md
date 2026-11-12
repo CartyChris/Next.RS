@@ -35,13 +35,41 @@ export default function Page() {
 - **Authoritative game rooms** are WebSocket routes. Every socket for `/api/room/<name>` runs on the same JS worker, so the room's memory *is* the game state; 20 snapshots a second fan out to players in Rust.
 - **The bots learn in your browser.** The lab evolves their 10 → 12 → 3 neural network with a genetic algorithm in a Web Worker, on the exact physics the server runs. Deploy a brain and every live room hot-swaps it within 2 seconds.
 - **The lobby** is streamed SSR with a loader, then kept live over a lobby socket. A caster comments on the action, with an optional LLM caster through `forge:ai`.
-- **`forge build --target single-html`** turns the whole thing (React, three.js, bloom, the game, the training worker) into one **290 kB** file that plays offline against bots, with zero network requests.
+- **`forge build --target single-html`** turns the whole thing (React, three.js, bloom, the game, the training worker) into one **257 kB** file that plays offline against bots, with zero network requests.
 
 ![The neuroevolution lab: fitness chart, training controls and a live preview of the champion brain](docs/images/lab.jpg)
 
 ```bash
 forge new arena --template arena && cd arena && npm install && forge dev
 ```
+
+## One file, anywhere
+
+A single HTML file is the most portable app there is: email it, open it from a USB stick, keep it for ten years. Next.RS treats it as a first-class target.
+
+**Small by default.** Single-file builds compress themselves when it pays: the script is deflated and stored as base-122 text (7 bits per byte, where base64 manages 6), then inflated by the browser and run as the same ES module.
+
+| Example | Plain | Shipped |
+|---|---|---|
+| React (TSX, layouts, loaders, streaming) | 235 kB | **85 kB** |
+| three.js game | 504 kB | **145 kB** |
+| Forge Arena (React + three.js + a worker) | 802 kB | **257 kB** |
+
+**Any page, packed.** `forge pack` turns HTML you already have, or a single component, into one offline file:
+
+```bash
+forge pack demo.html            # a page that loads from CDNs → demo.packed.html, no network needed
+forge pack Counter.tsx          # one React component → Counter.html, with React, icons and Tailwind inside
+forge pack Counter.tsx --watch  # repack on save, live reload at :3000
+```
+
+CDN URLs (unpkg, jsDelivr, esm.sh, Skypack, jspm) are fetched as verified npm packages; import maps and module scripts are bundled; scripts, styles, fonts and images are inlined (large ones compressed, still running in place); `<script type="text/babel">` is compiled ahead of time and the ~3 MB Babel runtime dropped. Measured on the [test fixtures](tests/fixtures/pack): a three.js import-map demo (1.6 kB page) becomes a 133 kB offline file, a React + Babel page 61 kB, and an artifact-style `Counter.tsx` (React 19, lucide-react, Tailwind) 165 kB, each loading with every network request blocked.
+
+**Files that save themselves.** `forge:file` gives single files a document model: `useDocument()` starts from the state saved in the file, and Ctrl/Cmd+S writes a copy of the app with the new state inside. Drop, open and export files with one call each. [`examples/pixel`](examples/pixel) is a 90 kB pixel-art editor built this way:
+
+![Pixel Pad: a pixel-art editor in one HTML file, with a palette, drawing tools, a heart sprite and a "Save this file" button](docs/images/pixel.jpg)
+
+**Develop against the real thing.** `forge dev --target single-html` rebuilds the actual file on every save and live-reloads it, so hash routing, embedded data and inlined assets behave exactly as shipped.
 
 ## Quick start
 
@@ -50,7 +78,7 @@ cargo install --git https://github.com/CartyChris/Next.RS
 ```
 
 ```bash
-forge new my-app --template react   # or: jsx, vanilla, three, ai
+forge new my-app --template react   # or: jsx, vanilla, three, ai, pixel, arena
 ```
 
 ```bash
@@ -87,6 +115,7 @@ cd my-app && npm install && forge dev
 - `forge:ai`: `chat()` and a tool-calling `runAgent()` over OpenAI-compatible, Anthropic, Gemini and Ollama protocols (normalized streaming events, assembled tool arguments, usage, abort), plus a mock provider for offline work
 - `forge:realtime`: sockets and pub/sub (above)
 - `forge:game`: fixed-timestep loop, keyboard/pointer input, DPR-aware canvas sizing
+- `forge:file`: open/save/drop files; self-saving single files (`useDocument`, `saveSelf`)
 
 **Assets and workers**: CSS imports; images, audio, fonts, 3D models, `.wasm`, `.onnx` as hashed URLs (data URLs in single-file builds); shaders and prompts (`.glsl .frag .vert .wgsl .md .prompt`) as strings; `new Worker(new URL("./x.worker.ts", import.meta.url))` bundles a worker, which also works offline from a single HTML file.
 
@@ -106,9 +135,10 @@ cd my-app && npm install && forge dev
 | [`react`](examples/react) | TSX, layouts, loaders + `staticParams`, Suspense streaming, API route, 404 |
 | [`jsx`](examples/jsx) | plain JSX clicker with persistent state, built as one HTML file |
 | [`vanilla`](examples/vanilla) | no framework, zero dependencies: `render()` + `mount()`, loaders, API |
-| [`three`](examples/three-game) | three.js game: fixed-step loop, input, GLSL imports; 165 kB single file |
+| [`three`](examples/three-game) | three.js game: fixed-step loop, input, GLSL imports; 145 kB single file |
+| [`pixel`](examples/pixel) | **Pixel Pad**: pixel-art editor in one 90 kB file that saves itself, imports dropped images, exports PNG |
 | [`ai`](examples/ai-chat) | streaming chat UI; proxies any OpenAI-compatible API (OpenAI, Ollama, LM Studio, vLLM, …) or echoes offline |
-| [`arena`](examples/arena) | **Forge Arena**: multiplayer socket rooms, neural bots trained in a worker, SSR lobby, 290 kB offline build |
+| [`arena`](examples/arena) | **Forge Arena**: multiplayer socket rooms, neural bots trained in a worker, SSR lobby, 257 kB offline build |
 
 ## Performance
 

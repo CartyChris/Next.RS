@@ -50,6 +50,28 @@ One Axum fallback handler, in order: probes → `/_forge/static/*` (immutable, p
 
 `forge dev` watches the project (excluding `node_modules`, `.forge`, `dist`), rebuilds in process, swaps in a new worker pool atomically, and tells browsers to reload over server-sent events. Build failures render as an overlay and recover on the next save.
 
+## Single files (`src/build/html.rs`, `src/server/single.rs`)
+
+A single-html build is one module script with everything inlined. Large scripts are deflated and stored as **base-122** text: the deflated bytes are read 7 bits at a time, each group becomes one ASCII character, and the six values that cannot appear raw in a `<script>` JS string (NUL and CR are rewritten by the HTML parser; LF, `"` and `\` end or escape the string; `<` could start `</script`) are folded with the next group into one two-byte UTF-8 character. That is about 14% overhead instead of base64's 33%. A ~300-byte decoder rebuilds the bytes, `DecompressionStream("deflate-raw")` inflates them, and the code is imported from a blob URL, so it runs as the same ES module.
+
+`forge:file`'s `saveSelf` needs the document as it was parsed: the client captures `<head>` and the prerendered root at startup (single-html builds only, under an `import.meta.env.TARGET` constant), and the app script carries an id, so a saved copy is the original document plus one `<script type="application/json">` with the state. A copy with saved state client-renders instead of hydrating markup that no longer matches it.
+
+`forge dev --target single-html` and `forge pack --watch` share `server/single.rs`: watch, rebuild the real artifact, serve it at `/` with the live-reload script, show build errors in the page.
+
+## Pack (`src/pack/`)
+
+`forge pack` turns an HTML page, or one component file, into a single offline file.
+
+1. **Scan** (`html.rs`, lol_html): record every element, its attributes, and script/style text.
+2. **Load**, concurrently, through one resolver (`Packer::load`): `data:` URLs; local files inside the page's folder (canonicalized, no hidden paths); CDN URLs (`cdn.rs`) mapped to npm packages; anything else over HTTP with a disk cache (`net.rs`).
+3. **npm** (`npm.rs`): abbreviated registry metadata (gzip, cached for an hour), npm semver ranges with the `latest` tag preferred, tarballs verified against the published sha512 (or sha1) and extracted with every path checked, then placed npm-style: hoisted to the top when free, nested under the package that needs it on a conflict, required peers included. Each install round fetches metadata and tarballs concurrently. Nothing from a package is ever executed.
+4. **Module scripts** (`js.rs`): one Rolldown build whose entry imports every module script in document order. A pack plugin resolves import maps (with scopes), CDN URLs (pinned files by path, packages through their `exports`), bare imports (a nearby `node_modules` first, then the npm workspace), and relative imports from remote modules. Page code is swept for asset-like string literals, which become data URLs.
+5. **Classic scripts and styles** are inlined where they were. Large ones are deflated to base-122 text and turned back into a `<script>`/`<style>` by a synchronous 1.5 kB inflater (`inline.rs`, tested against flate2 in QuickJS) that inserts the element right after itself, which the browser runs or applies immediately, so ordering and render-blocking CSS hold.
+6. **`text/babel`** is compiled with Oxc (classic JSX runtime, optional TypeScript) and placed at the end of `<body>`, where Babel would run it; the Babel runtime is dropped.
+7. **Rewrite** in one more lol_html pass, by element index. The output always starts with `<meta charset="utf-8">`.
+
+A component file (`component.rs`) is analyzed first (default export, JSX, React or Preact imports, `mount`, CSS imports, Tailwind-like classes), and a small page that mounts it goes through the same pipeline.
+
 ## Client (`src/runtime/js/client.js`, `react*.js`)
 
 The client entry starts a small router: match the route table, load the route chunk and its data in parallel, render through an adapter (React or vanilla), update `history` (or `location.hash` in single-file builds), and restore scroll. Links are intercepted when they point at app routes; `Link` prefetches on hover, focus and touch. Server-rendered pages hydrate with the boot JSON; pages that were not server-rendered mount fresh.

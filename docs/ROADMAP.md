@@ -38,6 +38,14 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 23. **Durable rooms**: persist socket-room state across worker restarts and deploys.
 24. **WebGPU example** and a compute-shader template.
 
+## Single files
+
+25. **Workers in `forge pack`.** Bundle `new Worker(new URL("./w.js", import.meta.url))` from packed pages the way single-html builds do (classic IIFE + Worker shim).
+26. **`text/babel` with `data-type="module"`** in `forge pack` (compile, then bundle with the page's modules).
+27. **Brotli payloads** where `DecompressionStream("brotli")` is available, with deflate as the fallback (measure the gain on the examples first).
+28. **Font subsetting** for packed Google Fonts: keep only the `unicode-range` blocks the page's text needs.
+29. **`forge pack --serve` previews on phones**: bind to the LAN with a QR code in the terminal.
+
 ## Done (this repository)
 
-Compiling crate and tests, in-process Rolldown, QuickJS SSR worker pool, streaming SSR, data endpoint, API routes, server/static/single-html targets, page cache, security scan and CSP, dev server with live reload and error overlay, request cancellation, WebSocket rooms with Rust pub/sub, Web Worker and asset URL bundling, provider-agnostic AI chat and agents, six examples including Forge Arena, CI. See [STATUS.md](STATUS.md).
+Compiling crate and tests, in-process Rolldown, QuickJS SSR worker pool, streaming SSR, data endpoint, API routes, server/static/single-html targets, page cache, security scan and CSP, dev server with live reload and error overlay, request cancellation, WebSocket rooms with Rust pub/sub, Web Worker and asset URL bundling, provider-agnostic AI chat and agents, automatic single-file compression, `forge:file` self-saving documents, `forge pack` for pages and component files, live single-file dev loops, seven examples including Forge Arena and Pixel Pad, CI. See [STATUS.md](STATUS.md).
