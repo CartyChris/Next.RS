@@ -35,8 +35,11 @@ jobs:
         with:
           node-version: 22
       - name: Install example dependencies
-        run: for e in react jsx three-game ai-chat; do (cd examples/$e && npm install --no-audit --no-fund); done
+        run: for e in react jsx three-game ai-chat arena; do (cd examples/$e && npm ci --no-audit --no-fund); done
       - run: cargo test --features e2e --test react
+      - name: Type-check the arena against Forge's declarations
+        working-directory: examples/arena
+        run: mkdir -p .forge/types && cp ../../src/runtime/js/forge.d.ts .forge/types/ && npx tsc -p .
       - run: cargo build --release
       - name: Browser tests
         working-directory: tests/browser

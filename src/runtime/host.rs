@@ -81,6 +81,7 @@ impl HostState {
     fn sink(&self, req: f64) -> Option<Sink> {
         self.requests.borrow().get(&(req as u64)).cloned()
     }
+    #[cfg(feature = "fetch")]
     fn take_cancelled(&self, op: f64) -> bool {
         self.cancelled.borrow_mut().remove(&(op as u64))
     }

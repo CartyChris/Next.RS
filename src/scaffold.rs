@@ -39,6 +39,14 @@ pub const TEMPLATES: &[(&str, &str, Files)] = &[
         "streaming AI chat: OpenAI-compatible proxy (or offline echo) + React UI",
         files!("ai-chat": "package.json", "forge.config.json", "tsconfig.json", "app/chat.css", "app/page.tsx", "app/api/chat/route.ts"),
     ),
+    (
+        "arena",
+        "multiplayer three.js arena: socket rooms, neural bots trained in a worker, offline single file",
+        files!("arena": "package.json", "forge.config.json", "tsconfig.json", "app/arena.css", "app/layout.tsx", "app/page.tsx", "app/loader.ts", "app/not-found.tsx",
+            "app/play/[room]/page.tsx", "app/lab/page.tsx", "app/api/room/[room]/route.ts", "app/api/lobby/route.ts", "app/api/champion/route.ts",
+            "app/_game/sim.ts", "app/_game/brain.ts", "app/_game/room.ts", "app/_game/commentary.ts", "app/_game/registry.ts", "app/_game/client.ts",
+            "app/_game/view.ts", "app/_game/preview.ts", "app/_game/evolve.worker.ts", "app/_game/floor.frag", "app/_game/floor.vert"),
+    ),
 ];
 
 const GITIGNORE: &str = "node_modules\n.forge\ndist\n.env\n";

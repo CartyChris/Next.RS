@@ -100,7 +100,7 @@ export function createView(canvas: HTMLCanvasElement) {
   const avatars = new Map<number, Avatar>();
   const bodyGeo = new THREE.SphereGeometry(PLAYER_R, 32, 20);
   const ringGeo = new THREE.RingGeometry(PLAYER_R * 1.25, PLAYER_R * 1.45, 40);
-  const bursts: { mesh: THREE.Mesh; t: number }[] = [];
+  const bursts: { mesh: THREE.Mesh; born: number }[] = [];
   const burstGeo = new THREE.RingGeometry(0.3, 0.45, 32);
 
   function avatar(p: Drawn): Avatar {
@@ -161,7 +161,7 @@ export function createView(canvas: HTMLCanvasElement) {
         burst.rotation.x = -Math.PI / 2;
         burst.position.set(p.x, 0.1, p.z);
         scene.add(burst);
-        bursts.push({ mesh: burst, t: 0 });
+        bursts.push({ mesh: burst, born: time });
       }
       a.score = p.score;
     }
@@ -184,12 +184,13 @@ export function createView(canvas: HTMLCanvasElement) {
     orbs.instanceMatrix.needsUpdate = true;
 
     for (let i = bursts.length - 1; i >= 0; i--) {
+      // Wall-clock age, so bursts vanish on time even when frames are slow.
       const b = bursts[i];
-      b.t += dt;
-      const k = 1 + b.t * 9;
+      const age = time - b.born;
+      const k = 1 + age * 9;
       b.mesh.scale.set(k, k, k);
-      (b.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - b.t * 2.2);
-      if (b.t > 0.5) {
+      (b.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - age * 2.2);
+      if (age > 0.5) {
         scene.remove(b.mesh);
         bursts.splice(i, 1);
       }

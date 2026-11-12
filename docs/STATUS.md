@@ -25,24 +25,34 @@ Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ repla
 | 3 | Native TS pipeline | ⤳ ✅ | Rolldown + Oxc in-process (`build/bundle.rs`) |
 | 3B–3E | Build hardening | 🟡 | Capsule ✅ (`build/manifest.rs`), module confinement via import policy ✅. Custom vendoring and CJS lowering dropped: Rolldown handles CJS |
 | 4 | Client hydration bridge | ✅ | `hydrateRoot` with boot JSON, modulepreload per route, `ErrorBoundary` export, works without JS, lazy route chunks |
-| 4B | Navigation, prefetch, metrics | 🟡 | Link interception, history, hover/focus/touch prefetch ✅. Viewport prefetch, performance marks, adaptive hydration ❌ |
+| 4B | Navigation, prefetch, metrics | 🟡 | Link interception, history, hover/focus/touch prefetch ✅, dev overlay for build and client errors ✅, `Server-Timing` ✅. Viewport prefetch, performance marks, adaptive hydration ❌ |
 | 4C | Route data protocol + layout graph | ✅ | `/_forge/data`, `{data}` / `{notFound}` / `{redirect}`, client dedupe cache, layouts per route in the manifest |
 | 4D | Persistent layouts | 🟡 | Layout state persists across navigation ✅. Layout-level `Loading`/`ErrorBoundary` ❌ (page-level ✅) |
 | 5A | Streaming transport | ✅ | chunked responses from the worker |
 | 5B | React Web Streams | ✅ | `renderToReadableStream` on the host's `ReadableStream` |
 | 5C | Op-backed push streaming | ✅ | `write` op into a per-request channel; zero-copy `pipe` for upstream fetch bodies |
-| 5D | Cancellation, stream hardening | 🟡 | Disconnect stops rendering ✅, backpressure (1 MiB high-water) ✅, host ops unreachable from app code ✅. `AbortSignal` into loaders ❌ |
+| 5D | Cancellation, stream hardening | ✅ | Disconnect or timeout aborts the request's `AbortSignal` (loaders, APIs, React render, `fetch`) ✅, backpressure (1 MiB high-water) ✅, host ops unreachable from app code ✅ |
 | 5E | Suspense-aware streaming | ✅ | fallbacks stream first, crawlers get `allReady`, per-route `streaming = false` |
 | 6 | Data model + resource cache | 🟡 | `forge:data` (`useData`, `getData`, `preloadData`) ✅, process cache `forge:cache` ✅. Request-scoped cache ❌ |
 | 6B | Loader execution | ✅ | `loader(ctx)` with params, url, request, env |
 | 6C | Serialization, redaction, ETag | 🟡 | ETag + 304 ✅, production error redaction ✅. Non-JSON values fail the request rather than a typed error; redaction hook ❌ |
-| 6D | Loader cancellation + tests | 🟡 | Request timeout → 504 ✅, tests ✅. Cooperative cancellation ❌ |
+| 6D | Loader cancellation + tests | ✅ | `ctx.signal`, timeout → 504 with abort, cancelled `fetch` results dropped in Rust; `tests/realtime.rs` |
 | 7 | Sandbox, timeouts, isolate hardening | 🟡 | Heap limit, CPU interrupt, timeouts, recycle ✅ (tested). Internal-import and eval policy ✅. Dependency capability policy and structured audit log ❌ |
 | 7B | Worker supervisor | 🟡 | Least-loaded dispatch, recycle on fatal error, liveness/readiness ✅. Crash-loop backoff is a fixed 1 s retry. Process-per-worker and cgroups ❌. Egress allowlist ✅ |
 | 8A | Persistent cache + tags | 🟡 | In-memory TTL + tags ✅, page cache with SWR ✅, in-flight dedupe ✅. Disk/Redis backend ❌ |
 | 8B | Rolldown pivot, targets, `forge check` | ✅ | server, static, single-html, `forge check`, AST security scan |
 | 8C | Rolldown backend + target matrix | ⤳ ✅ | No `BundlerBackend` trait or generated JS config: one in-process backend. Security, alias and manifest "plugins" are one Rust plugin |
 | 8D | Migration patch | ✅ | Every fixture module ported or superseded (below) |
+
+## Beyond the handoff design
+
+| Feature | Where | Verified by |
+|---|---|---|
+| Stateful WebSocket rooms (path-pinned workers), Rust pub/sub, `forge:realtime` | `server/socket.rs`, `runtime/mod.rs` (`Sockets`), `js/server.js`, `js/realtime.*.js` | `tests/realtime.rs`, arena browser checks |
+| Web Workers and `new URL(…, import.meta.url)` assets, incl. offline single-file | `build/bundle.rs`, `build/analyze.rs` | `tests/build.rs`, Chromium from `file://` |
+| `forge:ai` `chat()` / `runAgent()` across OpenAI-compatible, Anthropic, Gemini, Ollama | `js/ai.js` | `tests/ai.rs` (fake servers per protocol) |
+| `forge:cache` key-value API (`get`/`set`/`keys`) | `js/cache.*.js`, `runtime/mod.rs` | unit + arena |
+| Proof-of-life app: Forge Arena | `examples/arena` | `tests/react.rs`, `tests/browser/smoke.mjs` |
 
 ## The 8D fixture, file by file
 

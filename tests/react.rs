@@ -105,3 +105,53 @@ async fn ai_chat_streams_without_a_model() {
     assert!(res.body.trim_end().ends_with("data: [DONE]"));
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn arena_rooms_lobby_and_offline_build() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+    require_modules("arena");
+    let root = example("arena");
+    let base = listen(&root).await;
+    let lobby = reqwest::get(format!("{base}/")).await.unwrap().text().await.unwrap();
+    assert!(lobby.contains("Collect the light."), "lobby is server-rendered");
+
+    let (mut ws, _) = connect_async(format!("{}/api/room/ci", base.replace("http", "ws"))).await.unwrap();
+    ws.send(Message::text(r#"{"t":"join","name":"Robot Tester"}"#)).await.unwrap();
+    let mut seen = std::collections::HashSet::new();
+    let mut me_in_snapshot = false;
+    while !(seen.contains("hi") && seen.contains("roster") && me_in_snapshot) {
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+            .await
+            .expect("room is alive")
+            .unwrap()
+            .unwrap();
+        let Message::Text(t) = msg else { continue };
+        let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+        let kind = v["t"].as_str().unwrap_or_default().to_string();
+        if kind == "roster" && v["players"].as_array().unwrap().iter().any(|p| p["name"] == "Robot Tester") {
+            seen.insert("roster".to_string());
+        } else if kind == "s" && seen.contains("roster") {
+            me_in_snapshot = v["p"].as_array().unwrap().len() == 4; // three bots + us
+        } else {
+            seen.insert(kind);
+        }
+    }
+    let status: serde_json::Value = reqwest::get(format!("{base}/api/room/ci")).await.unwrap().json().await.unwrap();
+    assert_eq!((status["humans"].as_i64(), status["bots"].as_i64()), (Some(1), Some(3)), "{status}");
+
+    let bad = reqwest::Client::new()
+        .post(format!("{base}/api/champion"))
+        .body(r#"{"weights":[1,2,3]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400, "malformed brains are rejected");
+
+    let result = build(&root, Target::SingleHtml).await.unwrap();
+    let html = std::fs::read_to_string(root.join("dist/index.html")).unwrap();
+    assert!(html.len() < 400_000, "offline arena is {} bytes", html.len());
+    assert_eq!(result.artifacts.len(), 1);
+    std::fs::remove_dir_all(root).ok();
+}

@@ -80,8 +80,8 @@ async fn run(app: Arc<App>, worker: usize, request: String, socket: WebSocket) {
                 Some(WsOut::Data(WsData::Text(t))) => if sink.send(Message::Text(t.into())).await.is_err() { break },
                 Some(WsOut::Data(WsData::Binary(b))) => if sink.send(Message::Binary(b)).await.is_err() { break },
                 Some(WsOut::Close(c, r)) => {
-                    let _ = sink.send(Message::Close(Some(CloseFrame { code: c, reason: r.clone().into() }))).await;
                     (code, reason) = (c, r);
+                    close_handshake(&mut sink, &mut stream, code, &reason).await;
                     break;
                 }
                 None => break,
@@ -106,8 +106,8 @@ async fn run(app: Arc<App>, worker: usize, request: String, socket: WebSocket) {
                 tokens = (tokens + (now - refilled).as_secs_f64() * RATE).min(BURST);
                 refilled = now;
                 if tokens < 1.0 {
-                    let _ = sink.send(Message::Close(Some(CloseFrame { code: 1008, reason: "rate limited".into() }))).await;
                     (code, reason) = (1008, "rate limited".into());
+                    close_handshake(&mut sink, &mut stream, code, &reason).await;
                     break;
                 }
                 tokens -= 1.0;
@@ -118,4 +118,25 @@ async fn run(app: Arc<App>, worker: usize, request: String, socket: WebSocket) {
     }
     sockets.unregister(sid);
     app.pool.send_socket(worker, SocketJob::Close { sid, code, reason });
+}
+
+/// Send our close frame, then read (and discard) until the client acknowledges it. Dropping
+/// the connection with unread client data makes the kernel send a TCP reset, which can destroy
+/// the close frame in flight, and the client would see 1006 instead of the reason.
+async fn close_handshake<S, R>(sink: &mut S, stream: &mut R, code: u16, reason: &str)
+where
+    S: futures_util::Sink<Message> + Unpin,
+    R: futures_util::Stream<Item = Result<Message, axum::Error>> + Unpin,
+{
+    if sink.send(Message::Close(Some(CloseFrame { code, reason: reason.to_string().into() }))).await.is_err() {
+        return;
+    }
+    let drain = async {
+        while let Some(Ok(m)) = stream.next().await {
+            if matches!(m, Message::Close(_)) {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), drain).await;
 }

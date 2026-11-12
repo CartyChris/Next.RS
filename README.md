@@ -26,6 +26,23 @@ export default function Page() {
 
 `.tsx`, `.jsx`, `.ts` and `.js` are all first-class (TypeScript wins when both exist). Pages can also skip React entirely: export `render()` and/or `mount(el)`, which suits canvas games and small tools.
 
+## Proof of life: Forge Arena
+
+[`examples/arena`](examples/arena) is a real-time multiplayer 3D arena where people and neural-network bots race for glowing orbs, built entirely on Next.RS:
+
+![Forge Arena: a neon three.js arena with players, bots, a scoreboard and live commentary](docs/images/arena.jpg)
+
+- **Authoritative game rooms** are WebSocket routes. Every socket for `/api/room/<name>` runs on the same JS worker, so the room's memory *is* the game state; 20 snapshots a second fan out to players in Rust.
+- **The bots learn in your browser.** The lab evolves their 10 → 12 → 3 neural network with a genetic algorithm in a Web Worker, on the exact physics the server runs. Deploy a brain and every live room hot-swaps it within 2 seconds.
+- **The lobby** is streamed SSR with a loader, then kept live over a lobby socket. A caster comments on the action, with an optional LLM caster through `forge:ai`.
+- **`forge build --target single-html`** turns the whole thing (React, three.js, bloom, the game, the training worker) into one **290 kB** file that plays offline against bots, with zero network requests.
+
+![The neuroevolution lab: fitness chart, training controls and a live preview of the champion brain](docs/images/lab.jpg)
+
+```bash
+forge new arena --template arena && cd arena && npm install && forge dev
+```
+
 ## Quick start
 
 ```bash
@@ -48,7 +65,14 @@ cd my-app && npm install && forge dev
 - `app/` directory routing: `[param]`, `[...catchAll]`, `(groups)`, `_private` folders, nested `layout`s, `not-found`
 - `loader.ts` beside a page: server-only data, `notFound()`, `redirect()`, `staticParams()` for prerendering
 - `route.ts` API routes: one export per HTTP method, plain values become JSON, any `Response` (including streams) passes through
+- `ctx.signal` everywhere: a closed tab or a timeout aborts loaders, API handlers, React renders and outbound `fetch`
 - Client-side navigation with route-level code splitting, hover/focus prefetch, history or hash routing
+
+**Realtime**
+- `export const socket = { open, message, close }` turns a route into a WebSocket endpoint
+- Rooms for free: all sockets and HTTP requests for one path share a JS worker, so module state is consistent
+- Topic pub/sub (`ws.publish`, `publish()` from any server code) fanned out in Rust across workers; rate limits, slow-client protection, pings
+- `forge:realtime` in the browser: reconnecting JSON socket and a `useSocket` hook
 
 **Rendering**
 - Streaming SSR with real React Suspense (fallbacks first, content as it resolves); crawlers get complete HTML
@@ -58,12 +82,15 @@ cd my-app && npm install && forge dev
 
 **Built-in modules**
 - `forge:navigation`, `forge:data`: `Link`, `useRouter`, `useData`, …
-- `forge:cache`: TTL + tag cache shared by all server workers
+- `forge:cache`: TTL + tag cache and key-value store shared by all server workers
 - `forge:store`: `usePersistentState`, localStorage-backed (save games, settings), works from `file://`
-- `forge:ai`: `streamText` / `useStream` / `sseResponse` for OpenAI-compatible, Anthropic, Gemini and Ollama streams
+- `forge:ai`: `chat()` and a tool-calling `runAgent()` over OpenAI-compatible, Anthropic, Gemini and Ollama protocols (normalized streaming events, assembled tool arguments, usage, abort), plus a mock provider for offline work
+- `forge:realtime`: sockets and pub/sub (above)
 - `forge:game`: fixed-timestep loop, keyboard/pointer input, DPR-aware canvas sizing
 
-**Assets**: CSS imports, images/audio/fonts/3D models/`.wasm`/`.onnx` as hashed URLs (data URLs in single-file builds), shaders and prompts (`.glsl .frag .vert .wgsl .md .prompt`) as strings.
+**Assets and workers**: CSS imports; images, audio, fonts, 3D models, `.wasm`, `.onnx` as hashed URLs (data URLs in single-file builds); shaders and prompts (`.glsl .frag .vert .wgsl .md .prompt`) as strings; `new Worker(new URL("./x.worker.ts", import.meta.url))` bundles a worker, which also works offline from a single HTML file.
+
+**Dev loop**: rebuild on save, live reload, an in-page overlay for build errors and uncaught client errors, an access log, and `Server-Timing` on every response.
 
 **Secure by default**
 - Build-time AST scan of app code: `eval`, `new Function`, remote imports and Forge internals are rejected with `file:line:col`
@@ -81,6 +108,7 @@ cd my-app && npm install && forge dev
 | [`vanilla`](examples/vanilla) | no framework, zero dependencies: `render()` + `mount()`, loaders, API |
 | [`three`](examples/three-game) | three.js game: fixed-step loop, input, GLSL imports; 165 kB single file |
 | [`ai`](examples/ai-chat) | streaming chat UI; proxies any OpenAI-compatible API (OpenAI, Ollama, LM Studio, vLLM, …) or echoes offline |
+| [`arena`](examples/arena) | **Forge Arena**: multiplayer socket rooms, neural bots trained in a worker, SSR lobby, 290 kB offline build |
 
 ## Performance
 

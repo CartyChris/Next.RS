@@ -158,6 +158,30 @@ try {
   await p.click("button");
   await p.waitForSelector(".msg.assistant:not(#streaming)", { timeout: 10000 });
   check("ai: streamed reply rendered", (await p.textContent(".msg.assistant")).includes("You said: ping"));
+
+  // Arena: live lobby socket, a socket room, training in a worker, deploying, offline file.
+  build("arena", "server");
+  base = await start("arena");
+  p = await page(browser, { viewport: { width: 900, height: 560 } });
+  await p.goto(base + "/");
+  await p.waitForSelector(".stats .pill.open", { timeout: 10000 });
+  check("arena: lobby socket is live", true);
+  await p.goto(base + "/play/smoke");
+  await p.waitForFunction(() => document.querySelectorAll("#scores li").length === 4, null, { timeout: 20000 });
+  check("arena: joined a room with three bots", true);
+  await p.goto(base + "/lab");
+  await p.click("#train");
+  await p.waitForFunction(() => Number(document.querySelector("#generation")?.textContent) >= 2, null, { timeout: 60000 });
+  await p.click("#train");
+  await p.click("text=Deploy to every room");
+  await p.waitForSelector("text=Rooms switch within 2 seconds", { timeout: 10000 });
+  check("arena: lab trains in a Web Worker and deploys the brain", true);
+  check("arena: no console errors", p.errors.length === 0, JSON.stringify(p.errors));
+  build("arena", "single-html");
+  p = await page(browser, { viewport: { width: 900, height: 560 } });
+  await p.goto("file://" + join(examples, "arena/dist/index.html") + "#/play/solo");
+  await p.waitForFunction(() => document.querySelectorAll("#scores li").length === 5, null, { timeout: 20000 });
+  check("arena single-html: offline match against four bots", (await p.textContent(".pill")) === "offline vs bots");
 } catch (e) {
   failures.push(String(e?.stack ?? e));
   console.error(e);

@@ -26,6 +26,7 @@ Next.RS ("Forge") is one Rust binary that contains the bundler, the JavaScript e
    - `server-entry.js` statically imports every page, layout, loader and API route (client-only pages are not imported at all) and calls `createServer(...)`.
    - `client-entry.js` holds the route table with one `import()` per route, so each route is its own chunk.
 4. **Bundle** (`build/bundle.rs`): Rolldown as a Rust library, with one `forge` plugin that
+   - rewrites `new URL("./x", import.meta.url)`: scripts are bundled by a nested Rolldown build into a self-contained worker file (classic IIFE plus a Worker shim when inlined into single-file builds), other files become hashed or inlined assets,
    - resolves `forge:*` to the server or browser runtime file,
    - enforces the import policy (internals, remote URLs, Node built-ins in the browser),
    - collects CSS in module order, emits hashed or inlined assets, loads shaders/text as strings,
@@ -39,11 +40,13 @@ Next.RS ("Forge") is one Rust binary that contains the bundler, the JavaScript e
 - **Web platform** (`js/host.js`): `fetch`, `Request/Response/Headers`, `URL`, streams, encoders, `AbortController`, timers and `MessageChannel` built on the host ops. It is enough for `react-dom/server.browser`'s `renderToReadableStream`.
 - **Protocol** (`js/server.js`): Rust sends `{ kind: page|data|api|paths, route, params, url, headers, nonce, stream }`. JS answers `head(json)`, then `write(chunk)*` or `pipe(fetchHandle)`, then `end()`. For pages the head carries `meta` and the boot JSON; Rust wraps the streamed markup in the document (`render.rs` + `build/html.rs`).
 - **Backpressure**: `write` reports when more than 1 MiB is queued for a client; JS then awaits a drain. A disconnected client makes `write` fail, which stops rendering.
+- **Cancellation**: request ids are assigned in Rust. An abort guard is created with each dispatch and travels inside the response body; if the future or the body is dropped before the response ends (client gone, timeout), the guard sends `Abort(id)` to the worker, which fires that request's `AbortController`. `fetch()` listens to the signal, rejects immediately and tells Rust to drop the late result.
+- **Sockets and rooms**: a WebSocket's frames become `Socket(open | message | close)` jobs for one worker, chosen by hashing the URL path; plain HTTP requests to a socket route use the same worker. A process-wide registry maps socket ids to bounded outgoing queues and topics to subscribers, so `publish()` from any worker fans out in Rust. When an engine is replaced, the registry closes that worker's sockets (1012).
 - **Limits**: QuickJS heap limit; an interrupt handler stops any uninterrupted JS run longer than `cpuMs` (and any pump longer than `max(5 × cpuMs, timeoutMs)`); requests time out after `timeoutMs`. A tripped limit or out-of-memory tears the engine down and builds a new one; requests on that worker fail, other workers are unaffected.
 
 ## Server (`src/server/`)
 
-One Axum fallback handler, in order: probes → `/_forge/static/*` (immutable, precompressed) → `public/` files (paths with an extension) → `/_forge/data` → route table → not-found. Page responses stream `document open + React stream + document close`, with a per-response CSP nonce. Routes with `revalidate` are buffered into a page cache and served stale-while-revalidate; `invalidate()` from server code evicts pages by path or prefix.
+One Axum fallback handler, in order: probes → `/_forge/static/*` (immutable, precompressed) → `public/` files (paths with an extension) → `/_forge/data` → route table (WebSocket upgrades for socket routes) → not-found. A thin wrapper times every request (`Server-Timing`, access log). Page responses stream `document open + React stream + document close`, with a per-response CSP nonce. Routes with `revalidate` are buffered into a page cache and served stale-while-revalidate; `invalidate()` from server code evicts pages by path or prefix.
 
 `forge dev` watches the project (excluding `node_modules`, `.forge`, `dist`), rebuilds in process, swaps in a new worker pool atomically, and tells browsers to reload over server-sent events. Build failures render as an overlay and recover on the next save.
 

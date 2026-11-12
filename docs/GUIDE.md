@@ -8,6 +8,10 @@ Everything an app author needs. For how it works inside, see [ARCHITECTURE.md](A
 - [Layouts](#layouts)
 - [Loaders (server data)](#loaders)
 - [API routes](#api-routes)
+- [Cancellation](#cancellation)
+- [WebSockets and rooms](#websockets-and-rooms)
+- [Web Workers, WASM and models](#web-workers-wasm-and-models)
+- [AI: chat, tools and agents](#ai-chat-tools-and-agents)
 - [Build targets](#build-targets)
 - [Virtual modules](#virtual-modules)
 - [Assets and CSS](#assets-and-css)
@@ -148,6 +152,117 @@ Unlisted methods answer `405` with an `Allow` header. `HEAD` falls back to `GET`
 
 Returning `new Response(upstream.body)` where `upstream` came from `fetch()` streams the upstream bytes to the client **in Rust** without passing them through JavaScript: the fast path for LLM and media proxies.
 
+## Cancellation
+
+Every loader and API handler gets `ctx.signal` (also `request.signal`). It aborts when the client disconnects, at any point including mid-stream, or when the request exceeds `server.timeoutMs`. Pass it on so abandoned work stops:
+
+```ts
+export async function POST(request: Request, { signal, env }: ForgeContext) {
+  const upstream = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", body: await request.text(), signal });
+  return new Response(upstream.body); // a closed tab stops the upstream request (and its token bill)
+}
+```
+
+`fetch()` rejects with an `AbortError` and late responses are dropped in Rust. Streaming React renders are aborted with the same signal.
+
+## WebSockets and rooms
+
+An API route that exports `socket` accepts WebSocket upgrades:
+
+```ts
+// app/api/room/[room]/route.ts
+import { publish } from "forge:realtime";
+
+const rooms = new Map<string, { members: number; log: string[] }>();
+
+export const socket: ForgeSocketHandlers<{ room: string }> = {
+  open(ws) {
+    const room = rooms.get(ws.params.room) ?? { members: 0, log: [] };
+    rooms.set(ws.params.room, room);
+    room.members++;
+    ws.subscribe(`room:${ws.params.room}`);
+    ws.send({ type: "history", log: room.log });
+  },
+  message(ws, msg) {                       // JSON is parsed for you
+    rooms.get(ws.params.room)!.log.push(msg.text);
+    ws.publish(`room:${ws.params.room}`, { type: "say", text: msg.text }); // everyone else
+  },
+  close(ws) {
+    rooms.get(ws.params.room)!.members--;
+  },
+};
+
+// HTTP requests to a socket route run on the same worker as its sockets.
+export const GET = (_req: Request, { params }: ForgeContext<{ room: string }>) => rooms.get(params.room) ?? { members: 0 };
+```
+
+**Rooms:** every socket for one URL path, and every HTTP request to it, runs on the same JS worker. So module-level state (like `rooms` above) is one consistent room. Different paths spread across workers. If that worker is replaced (crash or limit), its sockets close with code 1012 and clients reconnect.
+
+**Pub/sub:** `ws.subscribe(topic)`, `ws.publish(topic, msg)` (all subscribers except this socket), and `publish(topic, msg)` / `subscribers(topic)` from `forge:realtime` in *any* server code. Fan-out happens in Rust across all workers, so a room can broadcast 20 snapshots a second without JS cost per recipient.
+
+**Limits:** messages up to `server.maxBodyBytes`; 120 incoming messages/s per socket (bursts of 240), beyond that the socket closes with 1008; a client that falls 1024 outgoing messages behind is disconnected; a handler that throws closes its socket with 1011; pings every 25 s.
+
+**Browser:** `forge:realtime` gives a reconnecting JSON socket:
+
+```tsx
+import { connect, useSocket } from "forge:realtime";
+
+const { status, send } = useSocket(`/api/room/${room}`, (msg) => setLog((l) => [...l, msg]));
+// status: "connecting" | "open" | "reconnecting" | "closed" | "offline" (file:// builds)
+```
+
+## Web Workers, WASM and models
+
+`new URL("./file", import.meta.url)` is bundled, Vite-style:
+
+```ts
+const worker = new Worker(new URL("./train.worker.ts", import.meta.url), { type: "module" });
+const model = await fetch(new URL("./models/net.onnx", import.meta.url));
+```
+
+- Script targets (`.js .ts .jsx .tsx .mjs .mts`) become self-contained worker bundles (`/_forge/static/workers/<name>.<hash>.js`), scanned like app code. Workers may start workers.
+- Anything else becomes a hashed asset (models, `.wasm`, data files).
+- In single-html builds workers are inlined as Blob URLs and assets as data URLs. Module workers cannot start from Blob URLs on `file://`, so Forge bundles inline workers as classic scripts and adapts `{ type: "module" }` for you. The Arena example trains neural networks this way, offline.
+
+## AI: chat, tools and agents
+
+`forge:ai` speaks four wire protocols behind one interface, in the browser and in server routes:
+
+```ts
+import { chat, runAgent } from "forge:ai";
+
+// Stream text from any provider.
+for await (const ev of chat({ provider: "anthropic", model: "claude-…", apiKey, messages: [{ role: "user", content: "Hi" }] })) {
+  if (ev.type === "text") process(ev.text);
+}
+const answer = await chat({ provider: "ollama", model: "llama3.2", messages }).text();
+
+// Tool-calling agent loop.
+for await (const ev of runAgent({
+  provider: "openai", model: "gpt-4o-mini", apiKey, signal,
+  messages: [{ role: "user", content: "Weather in Paris?" }],
+  tools: {
+    get_weather: {
+      description: "Current weather for a city",
+      parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+      run: async ({ city }) => ({ city, tempC: 21 }),
+    },
+  },
+})) {
+  // ev: text | tool_call | tool_result | usage | done | final
+}
+```
+
+| Provider | Default base URL | Notes |
+|---|---|---|
+| `openai` | `https://api.openai.com/v1` | any OpenAI-compatible API: OpenRouter, Groq, Together, vLLM, LM Studio, llama.cpp, Ollama's `/v1` (set `baseUrl`) |
+| `anthropic` | `https://api.anthropic.com/v1` | Messages API; adds the browser-access header when run in a browser |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | `streamGenerateContent` over SSE |
+| `ollama` | `http://localhost:11434` | native `/api/chat` NDJSON |
+| `mock` | | offline: echoes, and calls a tool when the message names it |
+
+Events are normalized: tool-call arguments arrive fully assembled (streamed partial JSON is joined for you), `usage` reports input/output tokens, `done` reports why the model stopped. Pass `signal: ctx.signal` in server routes so a closed tab cancels generation. Server-side keys come from `ctx.env` (listed in `server.env`), and the provider's host must be in `server.allowFetch`.
+
 ## Build targets
 
 ```bash
@@ -179,9 +294,10 @@ Single-html details:
 |---|---|
 | `forge:navigation` | `Link`, `navigate`, `prefetch`, `href`, `useRouter`, `useParams`, `usePathname`, `useSearchParams`, `currentRoute`, `notFound`, `redirect` |
 | `forge:data` | `useData`, `getData`, `preloadData` |
-| `forge:cache` | `cache(key, fn, { ttl, tags })`, `invalidate(keyOrTag)` (server: shared by all workers; also evicts cached pages for `"/path"`, `"/path/*"`, `"*"`) |
+| `forge:cache` | `cache(key, fn, { ttl, tags })` memoize; `get(key)`, `set(key, value, { ttl, tags })`, `keys(prefix)` key-value store; `invalidate(keyOrTag)`. Server: shared by all workers; `invalidate("/path")`, `"/path/*"` or `"*"` also evicts cached pages |
 | `forge:store` | `store.get/set/remove`, `usePersistentState(key, initial)`: localStorage-backed, survives reloads, syncs tabs |
-| `forge:ai` | `streamText(url, init)`, `sse(response)`, `sseResponse(asyncIterable)`, `useStream()`: OpenAI-compatible, Anthropic, Gemini and Ollama stream formats |
+| `forge:ai` | `chat()`, `runAgent()` ([above](#ai-chat-tools-and-agents)); `streamText(url, init)`, `sse(response)`, `sseResponse(asyncIterable)`, `useStream()` |
+| `forge:realtime` | browser: `connect(path, handlers)`, `useSocket(path, onMessage)`; server: `publish(topic, msg)`, `subscribers(topic)` |
 | `forge:game` | `loop({ update, render, step })` fixed-timestep loop, `input()` keyboard/pointer state, `fit(canvas, onResize)` DPR-aware sizing |
 
 Types are written to `.forge/types/forge.d.ts` on every build; include `.forge/types` in `tsconfig.json`.
@@ -216,7 +332,8 @@ Types are written to `.forge/types/forge.d.ts` on every build; include `.forge/t
     "timeoutMs": 15000,
     "cpuMs": 2000,
     "maxBodyBytes": 1048576,
-    "pageCacheEntries": 1024
+    "pageCacheEntries": 1024,
+    "accessLog": false
   },
   "security": {
     "allowEval": false,
@@ -233,6 +350,7 @@ Types are written to `.forge/types/forge.d.ts` on every build; include `.forge/t
 ```
 
 - `workers: 0` means one JS worker per core (max 8). `PORT` in the environment overrides `server.port`.
+- `server.accessLog: true` prints one line per request in production (`forge dev` always does). Every response carries a `Server-Timing` header, so devtools show server time.
 - `security.csp`: `true` (default policy), `false` (no header), or a string (your policy; `{nonce}` is replaced per response).
 - Compile-time constants: `process.env.NODE_ENV`, `import.meta.env.MODE/DEV/PROD/SSR`, plus `build.define`.
 

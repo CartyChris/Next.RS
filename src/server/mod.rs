@@ -437,7 +437,7 @@ async fn render_page(
     headers: &HeaderMap,
     stream: bool,
     dev: bool,
-) -> Result<PageOut, Response> {
+) -> Result<PageOut, Box<Response>> {
     let nonce = nonce();
     let url = request_url(uri, headers);
     let headers = header_list(headers);
@@ -459,13 +459,13 @@ async fn render_page(
             body: page_body(open, body),
             csp: html::csp(&app.project.config.security, &nonce, dev),
         }),
-        Ok(Rendered::Raw { builtin_not_found: true, .. }) => Err(builtin_not_found()),
+        Ok(Rendered::Raw { builtin_not_found: true, .. }) => Err(Box::new(builtin_not_found())),
         Ok(Rendered::Raw { status, headers, body, .. }) => Ok(PageOut::Raw {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
             body: Body::from_stream(body.into_stream()),
             headers,
         }),
-        Err(e) => Err(dispatch_error(e, dev)),
+        Err(e) => Err(Box::new(dispatch_error(e, dev))),
     }
 }
 
@@ -495,7 +495,7 @@ async fn page(app: &Arc<App>, route: &RouteEntry, params: routes::Params, req: P
     }
     let stream = route.streaming && !cacheable && !is_bot(&req.headers);
     match render_page(app, &route.id, &params, &req.uri, &req.headers, stream, dev).await {
-        Err(resp) => resp,
+        Err(resp) => *resp,
         Ok(PageOut::Raw { status, body, headers }) => raw_response(status, body, headers),
         Ok(PageOut::Html { status, body, csp }) => {
             if cacheable && status == StatusCode::OK {
@@ -571,7 +571,7 @@ async fn not_found(app: &Arc<App>, req: Parts, dev: bool) -> Response {
     {
         Ok(PageOut::Html { body, csp, .. }) => html_response(StatusCode::NOT_FOUND, body, csp.as_deref()),
         Ok(PageOut::Raw { status, body, headers }) => raw_response(status, body, headers),
-        Err(resp) => resp,
+        Err(resp) => *resp,
     }
 }
 
