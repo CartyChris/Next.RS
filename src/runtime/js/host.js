@@ -131,11 +131,24 @@
     encode(s = "") {
       return host.encode(String(s));
     }
+    // Whole characters only; `read` counts UTF-16 code units, lone surrogates become U+FFFD.
     encodeInto(s, dest) {
-      const b = host.encode(String(s));
-      const written = Math.min(b.length, dest.length);
-      dest.set(b.subarray(0, written));
-      return { read: s.length, written };
+      s = String(s);
+      let read = 0;
+      let written = 0;
+      for (const ch of s) {
+        let c = ch.codePointAt(0);
+        if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+        const n = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+        if (written + n > dest.length) break;
+        if (n === 1) dest[written] = c;
+        else if (n === 2) (dest[written] = 0xc0 | (c >> 6)), (dest[written + 1] = 0x80 | (c & 63));
+        else if (n === 3) (dest[written] = 0xe0 | (c >> 12)), (dest[written + 1] = 0x80 | ((c >> 6) & 63)), (dest[written + 2] = 0x80 | (c & 63));
+        else (dest[written] = 0xf0 | (c >> 18)), (dest[written + 1] = 0x80 | ((c >> 12) & 63)), (dest[written + 2] = 0x80 | ((c >> 6) & 63)), (dest[written + 3] = 0x80 | (c & 63));
+        written += n;
+        read += ch.length;
+      }
+      return { read, written };
     }
   };
   g.TextDecoder = class TextDecoder {

@@ -575,6 +575,18 @@ fn install<'js>(ctx: &Ctx<'js>, st: &Rc<HostState>) -> rquickjs::Result<()> {
     )?;
     let s = st.clone();
     host.set(
+        "cacheLease",
+        Function::new(ctx.clone(), move |key: String, ttl_ms: f64| {
+            s.shared.cache.lock().unwrap().lease(&key, Duration::from_secs_f64(ttl_ms.max(0.0) / 1000.0))
+        })?,
+    )?;
+    let s = st.clone();
+    host.set(
+        "cacheRelease",
+        Function::new(ctx.clone(), move |key: String| s.shared.cache.lock().unwrap().release(&key))?,
+    )?;
+    let s = st.clone();
+    host.set(
         "cacheDelete",
         Function::new(ctx.clone(), move |key: String| {
             s.shared.cache.lock().unwrap().invalidate(&key);

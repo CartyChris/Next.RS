@@ -114,6 +114,8 @@ fn host_allowed(allow: &[String], host: &str) -> bool {
 pub struct KvCache {
     entries: HashMap<String, (String, Instant, Vec<String>)>,
     tags: HashMap<String, HashSet<String>>,
+    /// `cache()` misses being computed, by key, until when (any worker).
+    leases: HashMap<String, Instant>,
 }
 
 impl KvCache {
@@ -145,10 +147,29 @@ impl KvCache {
             }
         }
         self.remove(&key);
+        self.leases.remove(&key);
         for t in &tags {
             self.tags.entry(t.clone()).or_default().insert(key.clone());
         }
         self.entries.insert(key, (value, Instant::now() + ttl, tags));
+    }
+
+    /// Claim the right to compute `key` for up to `ttl`. False while another caller (on any
+    /// worker) holds it; it ends when the value is set, the holder releases it, or it expires.
+    pub fn lease(&mut self, key: &str, ttl: Duration) -> bool {
+        let now = Instant::now();
+        if self.leases.get(key).is_some_and(|until| *until > now) {
+            return false;
+        }
+        if self.leases.len() >= Self::MAX_ENTRIES {
+            self.leases.retain(|_, until| *until > now);
+        }
+        self.leases.insert(key.to_string(), now + ttl);
+        true
+    }
+
+    pub fn release(&mut self, key: &str) {
+        self.leases.remove(key);
     }
 
     /// Live keys starting with `prefix`, sorted.

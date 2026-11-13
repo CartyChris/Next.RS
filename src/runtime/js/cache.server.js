@@ -2,23 +2,41 @@
 import { host } from "./host-ref.js";
 
 const inflight = new Map();
+/** How long one caller may compute a missing key before others take over. */
+const LEASE_MS = 30_000;
 
-/** Memoise `fn()` under `key` for `ttl` seconds. Concurrent callers share one computation. */
+/**
+ * Memoise `fn()` under `key` for `ttl` seconds. Concurrent callers share one computation, on
+ * this worker (one promise) and across workers (a lease in the shared cache: one computes,
+ * the others wait for its value, and take over if it fails or stalls).
+ */
 export async function cache(key, fn, { ttl = 60, tags = [] } = {}) {
   const hit = host.cacheGet(key);
   if (hit !== undefined) return JSON.parse(hit);
   let p = inflight.get(key);
   if (!p) {
-    p = Promise.resolve()
-      .then(fn)
-      .then((value) => {
-        host.cacheSet(key, JSON.stringify(value ?? null), ttl * 1000, tags.join(","));
-        return value ?? null;
-      })
-      .finally(() => inflight.delete(key));
+    p = compute(key, fn, ttl, tags).finally(() => inflight.delete(key));
     inflight.set(key, p);
   }
   return p;
+}
+
+async function compute(key, fn, ttl, tags) {
+  for (let wait = 5; ; wait = Math.min(wait * 2, 100)) {
+    const hit = host.cacheGet(key);
+    if (hit !== undefined) return JSON.parse(hit);
+    if (host.cacheLease(key, LEASE_MS)) {
+      try {
+        const value = (await fn()) ?? null;
+        host.cacheSet(key, JSON.stringify(value), ttl * 1000, tags.join(","));
+        return value;
+      } catch (e) {
+        host.cacheRelease(key);
+        throw e;
+      }
+    }
+    await new Promise((r) => setTimeout(r, wait));
+  }
 }
 
 /** The stored value, or `undefined`. */

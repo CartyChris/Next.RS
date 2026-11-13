@@ -5,7 +5,7 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -190,6 +190,44 @@ pub struct BuildConfig {
     pub define: BTreeMap<String, String>,
 }
 
+impl Config {
+    /// Directories are relative paths inside the project. Build outputs are deleted and
+    /// rewritten on every build, so they may not be the project itself or overlap sources.
+    pub fn check_dirs(&self) -> Result<()> {
+        let rel = |name: &str, v: &str| -> Result<PathBuf> {
+            let p = Path::new(v);
+            let inside =
+                !p.is_absolute() && p.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+            let norm: PathBuf = p.components().filter(|c| matches!(c, Component::Normal(_))).collect();
+            if !inside || norm.as_os_str().is_empty() {
+                bail!(
+                    "`{name}` must be a folder inside the project, like \"{}\" (got {v:?})",
+                    name.trim_end_matches("Dir")
+                );
+            }
+            Ok(norm)
+        };
+        let sources = [("appDir", rel("appDir", &self.app_dir)?), ("publicDir", rel("publicDir", &self.public_dir)?)];
+        let outputs = [("outDir", rel("outDir", &self.out_dir)?), ("distDir", rel("distDir", &self.dist_dir)?)];
+        let overlap = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
+        for (out_name, out) in &outputs {
+            for (src_name, src) in &sources {
+                if overlap(out, src) {
+                    bail!(
+                        "`{out_name}` ({}) overlaps `{src_name}` ({}): build output is deleted and rewritten",
+                        out.display(),
+                        src.display()
+                    );
+                }
+            }
+        }
+        if overlap(&outputs[0].1, &outputs[1].1) {
+            bail!("`outDir` and `distDir` must not overlap");
+        }
+        Ok(())
+    }
+}
+
 /// `build.compress`: `true`, `false` or `"auto"`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Compress {
@@ -245,6 +283,7 @@ impl Project {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
+        config.check_dirs().with_context(|| format!("invalid {}", path.display()))?;
         Ok(Self { root, config, target, mode })
     }
 
@@ -325,6 +364,26 @@ mod tests {
         assert!(matches!(c.security.csp, Some(Csp::Enabled(false))));
         let c: Config = serde_json::from_str(r#"{"security":{"csp":"default-src 'none'"}}"#).unwrap();
         assert!(matches!(c.security.csp, Some(Csp::Custom(_))));
+    }
+
+    #[test]
+    fn directories_stay_inside_the_project() {
+        let with = |field: &str, value: &str| {
+            let c: Config =
+                serde_json::from_str(&format!(r#"{{"{field}":{}}}"#, serde_json::to_string(value).unwrap())).unwrap();
+            c.check_dirs()
+        };
+        assert!(Config::default().check_dirs().is_ok());
+        assert!(with("distDir", "build/site").is_ok() && with("distDir", "./out").is_ok());
+        for bad in ["/", "/tmp/x", "..", "../elsewhere", "dist/../..", ".", "", "app", "app/dist", ".forge/dist"] {
+            assert!(with("distDir", bad).is_err(), "distDir {bad:?}");
+        }
+        assert!(
+            with("outDir", "/var/lib").is_err()
+                && with("outDir", "public").is_err()
+                && with("appDir", "../src").is_err()
+        );
+        assert!(with("publicDir", ".").is_err(), "the whole project must not be public");
     }
 
     #[test]

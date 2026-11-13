@@ -290,3 +290,58 @@ async fn review_regressions_server() {
     std::fs::remove_dir_all(root).ok();
     std::fs::remove_file(outside).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cache_misses_compute_once_across_workers() {
+    let root = project(
+        "single-flight",
+        &[
+            ("app/page.js", "export const render = () => '';"),
+            (
+                "app/api/value/route.js",
+                r#"import { cache, set, keys } from "forge:cache";
+export async function GET() {
+  const v = await cache("shared", async () => {
+    set("ran:" + Math.random(), 1);
+    await new Promise((r) => setTimeout(r, 300));
+    return "value";
+  });
+  return { v, runs: keys("ran:").length };
+}"#,
+            ),
+            ("forge.config.json", r#"{"server":{"workers":4}}"#),
+        ],
+    );
+    let app = serve(&root).await;
+    // Concurrent misses land on different workers (least-loaded dispatch).
+    let all = futures_util::future::join_all((0..8).map(|_| get(&app, "/api/value"))).await;
+    for r in &all {
+        assert!(r.body.starts_with(r#"{"v":"value","#), "{}", r.body);
+    }
+    assert_eq!(get(&app, "/api/value").await.body, r#"{"v":"value","runs":1}"#, "computed more than once");
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn text_encoder_encode_into_writes_whole_characters() {
+    let root = project(
+        "encode-into",
+        &[
+            ("app/page.js", "export const render = () => '';"),
+            (
+                "app/api/enc/route.js",
+                r#"export function GET() {
+  const enc = new TextEncoder();
+  const run = (s, n) => { const d = new Uint8Array(n); const r = enc.encodeInto(s, d); return [r.read, r.written, Array.from(d.subarray(0, r.written))]; };
+  return [run("é", 1), run("aé", 2), run("aé", 3), run("😀x", 4), run("😀x", 3), run("a\uD800b", 10)];
+}"#,
+            ),
+        ],
+    );
+    let app = serve(&root).await;
+    assert_eq!(
+        get(&app, "/api/enc").await.body,
+        "[[0,0,[]],[1,1,[97]],[2,3,[97,195,169]],[2,4,[240,159,152,128]],[0,0,[]],[3,5,[97,239,191,189,98]]]"
+    );
+    std::fs::remove_dir_all(root).ok();
+}
