@@ -1,0 +1,13 @@
+{
+  "name": "forge-jsx",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "forge dev",
+    "build": "forge build --target single-html"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
+}

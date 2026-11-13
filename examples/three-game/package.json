@@ -1,0 +1,12 @@
+{
+  "name": "forge-three-game",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "forge dev",
+    "build": "forge build --target single-html"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  }
+}

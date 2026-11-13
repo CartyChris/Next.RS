@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://unpkg.com">
+  <title>Spinning crate</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">Drag to orbit</div>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { spin } from "./spin.js";
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(2, 2, 3);
+    new OrbitControls(camera, renderer.domElement);
+    const texture = new THREE.TextureLoader().load("crate.png", () => {
+      window.__textureLoaded = true;
+    });
+    texture.magFilter = THREE.NearestFilter;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ map: texture }));
+    scene.add(box);
+    renderer.setAnimationLoop((t) => {
+      spin(box, t);
+      renderer.render(scene, camera);
+      window.__frames = (window.__frames || 0) + 1;
+    });
+  </script>
+</body>
+</html>

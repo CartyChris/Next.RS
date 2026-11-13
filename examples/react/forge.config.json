@@ -1,0 +1,6 @@
+{
+  "title": "Forge React",
+  "server": {
+    "port": 3000
+  }
+}

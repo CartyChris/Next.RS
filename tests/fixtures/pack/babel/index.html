@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Babel counter</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>body { font: 16px system-ui; } button { font: inherit; padding: 8px 14px; }</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    function Counter({ start }) {
+      const [n, setN] = React.useState(start);
+      return <button id="inc" onClick={() => setN(n + 1)}>Clicked {n} times</button>;
+    }
+  </script>
+  <script type="text/babel">
+    // Top-level declarations are shared between babel scripts, as in the browser.
+    ReactDOM.createRoot(document.getElementById("root")).render(<><h1>Hello</h1><Counter start={0} /></>);
+  </script>
+</body>
+</html>

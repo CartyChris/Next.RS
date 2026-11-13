@@ -1,0 +1,6 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111318; color: #f1f3f5; }
+main { display: grid; place-items: center; min-height: 100vh; text-align: center; }
+.score { font-size: 4rem; font-variant-numeric: tabular-nums; margin: 0.5rem 0; }
+button { font: inherit; font-size: 1.25rem; padding: 0.75rem 1.5rem; border-radius: 0.75rem; border: 0; background: #e8590c; color: white; cursor: pointer; }
+button:active { transform: scale(0.97); }
+button.secondary { background: transparent; color: inherit; border: 1px solid #fff4; font-size: 1rem; margin-left: 0.5rem; }
