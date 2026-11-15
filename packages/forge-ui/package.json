@@ -1,0 +1,23 @@
+{
+  "name": "@nextrs/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Accessible React components and design tokens for Next.RS (Forge).",
+  "license": "MIT",
+  "files": ["src", "styles.css", "README.md"],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./styles.css": {
+      "types": "./src/styles.d.ts",
+      "default": "./styles.css"
+    }
+  },
+  "sideEffects": ["./styles.css"],
+  "peerDependencies": {
+    "react": "^19.0.0"
+  }
+}

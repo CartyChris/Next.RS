@@ -87,6 +87,10 @@ cd my-app && npm install && forge dev
 
 `forge dev` rebuilds on save (the React example: ~0.2 s including restarting the JS workers) and reloads the browser. Build and security errors appear as an in-browser overlay.
 
+## Forge UI
+
+[Forge UI](packages/forge-ui) supplies typed React building blocks, accessible interactions, and light, dark, and system themes. Follow the [component guide](docs/FORGE_UI.md) or run [Relay](examples/ui-showcase) to see the same interface on the SSR, static, and single-file targets.
+
 ## What you get
 
 **Routing and data**
