@@ -272,3 +272,29 @@ export function mount(el) { el.dataset.target = import.meta.env.TARGET; }"#;
         std::fs::remove_dir_all(root).ok();
     }
 }
+
+#[test]
+fn forge_ui_sources_and_types_agree() {
+    // Every source file of packages/forge-ui is embedded, and the generated declarations
+    // cover the public module and each internal one.
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/forge-ui/src");
+    let mut on_disk: Vec<String> = std::fs::read_dir(&src)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "styles.d.ts")
+        .collect();
+    on_disk.push("styles.css".into());
+    on_disk.sort();
+    let mut embedded: Vec<String> = nextrs::build::generated::UI_FILES.iter().map(|(n, _)| n.to_string()).collect();
+    embedded.sort();
+    assert_eq!(on_disk, embedded, "add new forge-ui files to UI_FILES in src/build/generated.rs");
+    let dts = nextrs::build::generated::UI_DTS;
+    assert!(dts.contains(r#"declare module "forge:ui" {"#));
+    for (name, _) in nextrs::build::generated::UI_FILES.iter().filter(|(n, _)| *n != "styles.css" && *n != "index.ts") {
+        let module = name.rsplit_once('.').unwrap().0;
+        assert!(
+            dts.contains(&format!(r#"declare module "forge:ui/{module}""#)),
+            "types for {name} missing: rerun build-types.mjs"
+        );
+    }
+}

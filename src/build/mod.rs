@@ -259,6 +259,7 @@ pub async fn build(project: &Project) -> Result<BuildResult> {
     let gen_dir = project.generated_dir();
     std::fs::create_dir_all(out_dir.join("types"))?;
     generated::write_if_changed(&out_dir.join("types/forge.d.ts"), TYPES_DTS)?;
+    generated::write_if_changed(&out_dir.join("types/forge-ui.d.ts"), generated::UI_DTS)?;
 
     let emit = |static_data: Option<&str>| {
         generated::emit(&EmitInput {

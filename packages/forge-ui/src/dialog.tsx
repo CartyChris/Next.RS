@@ -9,6 +9,11 @@ export interface DialogProps {
   children?: ReactNode;
   footer?: ReactNode;
   className?: string;
+  /** `center` is a modal dialog; the others slide in from an edge (a drawer or sheet). */
+  placement?: "center" | "left" | "right" | "bottom";
+  size?: "sm" | "md" | "lg";
+  /** The close button's accessible name. */
+  closeLabel?: string;
 }
 
 interface ParentDialog {
@@ -18,7 +23,10 @@ interface ParentDialog {
 
 const DialogContext = createContext<ParentDialog | null>(null);
 
-export function Dialog({ open, onOpenChange, title, description, children, footer, className }: DialogProps) {
+export function Dialog({
+  open, onOpenChange, title, description, children, footer, className, placement = "center", size = "md",
+  closeLabel = "Close dialog",
+}: DialogProps) {
   const id = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -67,6 +75,8 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
         ref={dialogRef}
         className={className ? `forge-ui-dialog ${className}` : "forge-ui-dialog"}
         aria-modal="true"
+        data-placement={placement}
+        data-size={size}
         aria-labelledby={`${id}-title`}
         aria-describedby={description == null ? undefined : `${id}-description`}
         onCancel={(event) => {
@@ -90,7 +100,7 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
           <button
             type="button"
             className="forge-ui-button forge-ui-button--ghost forge-ui-dialog-close"
-            aria-label="Close dialog"
+            aria-label={closeLabel}
             onClick={() => onOpenChange(false)}
           >
             <span aria-hidden="true">×</span>
@@ -101,4 +111,11 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
       </dialog>
     </DialogContext.Provider>
   );
+}
+
+export type DrawerProps = DialogProps;
+
+/** A panel that slides in from an edge, for navigation, filters or details. Same behavior as `Dialog`. */
+export function Drawer({ placement = "right", closeLabel = "Close panel", ...props }: DrawerProps) {
+  return <Dialog {...props} placement={placement} closeLabel={closeLabel} />;
 }

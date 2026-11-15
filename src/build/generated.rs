@@ -40,7 +40,30 @@ pub const RUNTIME: &[(&str, &str)] = &[
     ("realtime.server.js", include_str!("../runtime/js/realtime.server.js")),
     ("realtime.client.js", include_str!("../runtime/js/realtime.client.js")),
     ("file.js", include_str!("../runtime/js/file.js")),
+    ("ui.js", include_str!("../runtime/js/ui.js")),
 ];
+
+/// Forge UI (`forge:ui`): the sources of `packages/forge-ui`, compiled with the app.
+pub const UI_FILES: &[(&str, &str)] = &[
+    ("index.ts", include_str!("../../packages/forge-ui/src/index.ts")),
+    ("config.ts", include_str!("../../packages/forge-ui/src/config.ts")),
+    ("hooks.ts", include_str!("../../packages/forge-ui/src/hooks.ts")),
+    ("icon.tsx", include_str!("../../packages/forge-ui/src/icon.tsx")),
+    ("primitives.tsx", include_str!("../../packages/forge-ui/src/primitives.tsx")),
+    ("fields.tsx", include_str!("../../packages/forge-ui/src/fields.tsx")),
+    ("dialog.tsx", include_str!("../../packages/forge-ui/src/dialog.tsx")),
+    ("tabs.tsx", include_str!("../../packages/forge-ui/src/tabs.tsx")),
+    ("notifications.tsx", include_str!("../../packages/forge-ui/src/notifications.tsx")),
+    ("overlay.tsx", include_str!("../../packages/forge-ui/src/overlay.tsx")),
+    ("data.tsx", include_str!("../../packages/forge-ui/src/data.tsx")),
+    ("command.tsx", include_str!("../../packages/forge-ui/src/command.tsx")),
+    ("layout.tsx", include_str!("../../packages/forge-ui/src/layout.tsx")),
+    ("game.tsx", include_str!("../../packages/forge-ui/src/game.tsx")),
+    ("styles.css", include_str!("../../packages/forge-ui/styles.css")),
+];
+
+/// Ambient types for `forge:ui`, generated from the same sources.
+pub const UI_DTS: &str = include_str!("../../packages/forge-ui/forge-ui.d.ts");
 
 /// Public virtual modules: `(specifier, server file, client file)`.
 pub const VIRTUAL_MODULES: &[(&str, &str, &str)] = &[
@@ -52,6 +75,7 @@ pub const VIRTUAL_MODULES: &[(&str, &str, &str)] = &[
     ("forge:game", "game.js", "game.js"),
     ("forge:realtime", "realtime.server.js", "realtime.client.js"),
     ("forge:file", "file.js", "file.js"),
+    ("forge:ui", "ui.js", "ui.js"),
 ];
 
 pub const NOT_FOUND_ID: &str = "not_found";
@@ -142,6 +166,10 @@ pub fn emit(input: &EmitInput<'_>) -> Result<Generated> {
     std::fs::create_dir_all(&routes_dir)?;
     for (name, source) in RUNTIME {
         write_if_changed(&runtime.join(name), source)?;
+    }
+    std::fs::create_dir_all(runtime.join("ui"))?;
+    for (name, source) in UI_FILES {
+        write_if_changed(&runtime.join("ui").join(name), source)?;
     }
 
     let mut route_modules = Vec::new();
