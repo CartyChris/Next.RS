@@ -13,3 +13,15 @@ export async function cache(key, fn, { ttl = 60, tags = [] } = {}) {
 export function invalidate(keyOrTag) {
   for (const [key, entry] of entries) if (key === keyOrTag || entry.tags.includes(keyOrTag)) entries.delete(key);
 }
+
+export function get(key) {
+  const hit = entries.get(key);
+  return hit && hit.until > Date.now() ? hit.value : undefined;
+}
+
+export function set(key, value, { ttl = 86400, tags = [] } = {}) {
+  entries.set(key, { value, until: Date.now() + ttl * 1000, tags });
+  return value;
+}
+
+export const keys = (prefix = "") => [...entries.keys()].filter((k) => k.startsWith(prefix) && get(k) !== undefined).sort();

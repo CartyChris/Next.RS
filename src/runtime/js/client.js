@@ -1,6 +1,6 @@
 // Client runtime: route matching, data fetching, history/hash navigation, and
 // mounting through a renderer adapter (React, or the built-in vanilla adapter).
-import { rt, resolveMeta, ROOT_ID, DATA_ID } from "./shared.js";
+import { rt, resolveMeta, ROOT_ID, DATA_ID, STATE_ID } from "./shared.js";
 
 let routes = [];
 let notFoundRoute = null;
@@ -230,6 +230,17 @@ export async function start(config) {
   rt.mode = config.mode;
   rt.navigate = go;
   rt.prefetch = prefetch;
+  // Single files keep the document as parsed (before anything renders), so forge:file can
+  // write a copy of the app with new state embedded. State saved in this copy comes out first.
+  if (import.meta.env.TARGET === "single-html") {
+    const saved = document.getElementById(STATE_ID);
+    let embedded;
+    try {
+      embedded = saved ? JSON.parse(saved.textContent) : undefined;
+    } catch {}
+    saved?.remove();
+    rt.selfDocument = { head: document.head.innerHTML, root: document.getElementById(ROOT_ID)?.innerHTML ?? "", state: embedded };
+  }
 
   addEventListener("click", onClick);
   const onPop = () => {
@@ -245,8 +256,13 @@ export async function start(config) {
     boot = JSON.parse(document.getElementById(DATA_ID)?.textContent || "null");
   } catch {}
   const route = boot?.route && (routes.find((r) => r.id === boot.route) ?? (notFoundRoute?.id === boot.route ? notFoundRoute : null));
-  if (!route) return go(rt.mode === "hash" ? location.hash || "/" : location.pathname + location.search, { history: false, scroll: false });
-  const mod = await route.load();
   const loc = here();
-  render({ route: route.id, kind: route.kind, params: boot.params ?? {}, data: boot.data ?? null, pathname: loc.pathname, search: loc.search, mod }, true);
+  // No boot state, or (hash mode) the document was prerendered for another path: resolve like a navigation.
+  if (!route || (boot.pathname && boot.pathname !== loc.pathname)) {
+    return go(rt.mode === "hash" ? loc.pathname + loc.search : location.pathname + location.search, { history: false, scroll: false });
+  }
+  const mod = await route.load();
+  // Markup prerendered at build time does not reflect state saved into the file since.
+  const hydrate = boot.ssr !== false && rt.selfDocument?.state === undefined;
+  render({ route: route.id, kind: route.kind, params: boot.params ?? {}, data: boot.data ?? null, pathname: loc.pathname, search: loc.search, mod }, hydrate);
 }

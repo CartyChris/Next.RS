@@ -9,6 +9,7 @@
   // The server runtime claims the raw ops exactly once; app code never sees them.
   g.__forge_take_host = () => {
     delete g.__forge_take_host;
+    host.op = op;
     return host;
   };
 
@@ -21,6 +22,14 @@
       pending.set(id, [resolve, reject]);
       start(id);
     });
+  // Give up on an in-flight op: its promise rejects now and Rust drops the late result.
+  const abortOp = (id, reason) => {
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    host.cancel(id);
+    p[1](reason);
+  };
   g.__forge_resolve = (id, ok, value) => {
     const p = pending.get(id);
     if (!p) return;
@@ -122,11 +131,24 @@
     encode(s = "") {
       return host.encode(String(s));
     }
+    // Whole characters only; `read` counts UTF-16 code units, lone surrogates become U+FFFD.
     encodeInto(s, dest) {
-      const b = host.encode(String(s));
-      const written = Math.min(b.length, dest.length);
-      dest.set(b.subarray(0, written));
-      return { read: s.length, written };
+      s = String(s);
+      let read = 0;
+      let written = 0;
+      for (const ch of s) {
+        let c = ch.codePointAt(0);
+        if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+        const n = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+        if (written + n > dest.length) break;
+        if (n === 1) dest[written] = c;
+        else if (n === 2) (dest[written] = 0xc0 | (c >> 6)), (dest[written + 1] = 0x80 | (c & 63));
+        else if (n === 3) (dest[written] = 0xe0 | (c >> 12)), (dest[written + 1] = 0x80 | ((c >> 6) & 63)), (dest[written + 2] = 0x80 | (c & 63));
+        else (dest[written] = 0xf0 | (c >> 18)), (dest[written + 1] = 0x80 | ((c >> 12) & 63)), (dest[written + 2] = 0x80 | ((c >> 6) & 63)), (dest[written + 3] = 0x80 | (c & 63));
+        written += n;
+        read += ch.length;
+      }
+      return { read, written };
     }
   };
   g.TextDecoder = class TextDecoder {
@@ -152,6 +174,30 @@
       }
       return host.decode(b);
     }
+  };
+
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  g.btoa = (s) => {
+    s = String(s);
+    let out = "";
+    for (let i = 0; i < s.length; i += 3) {
+      const a = s.charCodeAt(i), b = s.charCodeAt(i + 1), c = s.charCodeAt(i + 2);
+      if (a > 255 || b > 255 || c > 255) throw new Error("btoa: character out of Latin1 range");
+      const n = (a << 16) | ((b || 0) << 8) | (c || 0);
+      out += B64[n >> 18] + B64[(n >> 12) & 63] + (i + 1 < s.length ? B64[(n >> 6) & 63] : "=") + (i + 2 < s.length ? B64[n & 63] : "=");
+    }
+    return out;
+  };
+  g.atob = (s) => {
+    s = String(s).replace(/[\s=]/g, "");
+    let out = "";
+    for (let i = 0; i < s.length; i += 4) {
+      const n = (B64.indexOf(s[i]) << 18) | (B64.indexOf(s[i + 1]) << 12) | ((B64.indexOf(s[i + 2]) & 63) << 6) | (B64.indexOf(s[i + 3]) & 63);
+      out += String.fromCharCode(n >> 16);
+      if (i + 2 < s.length) out += String.fromCharCode((n >> 8) & 255);
+      if (i + 3 < s.length) out += String.fromCharCode(n & 255);
+    }
+    return out;
   };
 
   // ---- URL ------------------------------------------------------------------
@@ -224,11 +270,13 @@
   }
   class URL {
     #p;
+    #ser; // serialization of the untouched query: the raw query is kept until searchParams changes
     constructor(input, base) {
       const p = host.url(String(input), base == null ? undefined : String(base));
       if (!p) throw new TypeError(`Invalid URL: ${input}`);
       this.#p = p;
       this.searchParams = new URLSearchParams(p[8]);
+      this.#ser = this.searchParams.toString();
     }
     static canParse(input, base) {
       return !!host.url(String(input), base == null ? undefined : String(base));
@@ -259,10 +307,14 @@
     }
     get search() {
       const s = this.searchParams.toString();
+      if (s === this.#ser) return this.#p[8] === "?" ? "" : this.#p[8];
       return s ? `?${s}` : "";
     }
     set search(v) {
-      this.searchParams = new URLSearchParams(String(v));
+      v = String(v);
+      this.#p[8] = v && !v.startsWith("?") ? `?${v}` : v;
+      this.searchParams = new URLSearchParams(v);
+      this.#ser = this.searchParams.toString();
     }
     get hash() {
       return this.#p[9];
@@ -646,10 +698,24 @@
   const dropper = g.FinalizationRegistry ? new g.FinalizationRegistry((handle) => host.drop(handle)) : null;
   g.fetch = async (input, init = {}) => {
     const req = new Request(input, init);
-    req.signal?.throwIfAborted();
+    const signal = req.signal;
+    signal?.throwIfAborted();
     const body = req._body == null ? null : await collect(req._body);
     const meta = JSON.stringify({ url: new URL(req.url).href, method: req.method, headers: [...req.headers] });
-    const [status, statusText, headers, handle, url] = JSON.parse(await op((o) => host.fetch(o, meta, body)));
+    let opId;
+    const pendingResponse = op((o) => {
+      opId = o;
+      host.fetch(o, meta, body);
+    });
+    const onAbort = () => abortOp(opId, signal.reason);
+    signal?.addEventListener("abort", onAbort);
+    let parts;
+    try {
+      parts = JSON.parse(await pendingResponse);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
+    const [status, statusText, headers, handle, url] = parts;
     const stream = new ReadableStream({
       async pull(c) {
         const chunk = await op((o) => host.read(o, handle));
@@ -660,6 +726,7 @@
     });
     stream._handle = handle;
     dropper?.register(stream, handle);
+    signal?.addEventListener("abort", () => stream.cancel(signal.reason));
     const res = new Response(stream, { status, statusText, headers });
     res.url = url;
     return res;

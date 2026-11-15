@@ -37,6 +37,9 @@ pub const RUNTIME: &[(&str, &str)] = &[
     ("store.js", include_str!("../runtime/js/store.js")),
     ("ai.js", include_str!("../runtime/js/ai.js")),
     ("game.js", include_str!("../runtime/js/game.js")),
+    ("realtime.server.js", include_str!("../runtime/js/realtime.server.js")),
+    ("realtime.client.js", include_str!("../runtime/js/realtime.client.js")),
+    ("file.js", include_str!("../runtime/js/file.js")),
 ];
 
 /// Public virtual modules: `(specifier, server file, client file)`.
@@ -47,6 +50,8 @@ pub const VIRTUAL_MODULES: &[(&str, &str, &str)] = &[
     ("forge:store", "store.js", "store.js"),
     ("forge:ai", "ai.js", "ai.js"),
     ("forge:game", "game.js", "game.js"),
+    ("forge:realtime", "realtime.server.js", "realtime.client.js"),
+    ("forge:file", "file.js", "file.js"),
 ];
 
 pub const NOT_FOUND_ID: &str = "not_found";
@@ -58,6 +63,15 @@ pub enum PageKind {
     React,
     /// Exports `mount(el, ctx)` and/or `render(ctx)`; no framework.
     Vanilla,
+}
+
+/// What the code generator needs to know about each page (from static analysis).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageInfo {
+    pub kind: PageKind,
+    /// Rendered on the server. Client-only pages are not even imported by the server bundle,
+    /// so their modules may touch `window`/`document` at the top level.
+    pub ssr: bool,
 }
 
 impl PageKind {
@@ -110,8 +124,8 @@ pub struct EmitInput<'a> {
     pub root: &'a Path,
     pub dir: &'a Path,
     pub table: &'a RouteTable,
-    /// Page kind per route id (including [`NOT_FOUND_ID`]).
-    pub kinds: &'a BTreeMap<String, PageKind>,
+    /// Per route id (including [`NOT_FOUND_ID`]).
+    pub pages: &'a BTreeMap<String, PageInfo>,
     pub mode: Mode,
     pub target: Target,
     /// single-html: JSON object of `pathname → loader data`, computed at build time.
@@ -150,11 +164,15 @@ pub fn emit(input: &EmitInput<'_>) -> Result<Generated> {
 }
 
 fn uses_react(input: &EmitInput<'_>) -> bool {
-    input.kinds.values().any(|k| *k == PageKind::React)
+    input.pages.values().any(|p| p.kind == PageKind::React)
+}
+
+fn info(input: &EmitInput<'_>, id: &str) -> PageInfo {
+    input.pages.get(id).copied().unwrap_or(PageInfo { kind: PageKind::React, ssr: true })
 }
 
 fn kind_of(input: &EmitInput<'_>, id: &str) -> &'static str {
-    input.kinds.get(id).copied().unwrap_or(PageKind::React).as_str()
+    info(input, id).kind.as_str()
 }
 
 fn client_route_module(root: &Path, from_dir: &Path, page: &str, layouts: &[String]) -> String {
@@ -197,15 +215,15 @@ impl<'a> Imports<'a> {
 fn server_entry_source(input: &EmitInput<'_>) -> String {
     let mut imports = Imports::new(input.root, input.dir);
     let page_entry = |imports: &mut Imports<'_>, id: &str, file: &str, layouts: &[String], loader: Option<&String>| {
-        let page = imports.name(file);
-        let layouts: Vec<String> = layouts.iter().map(|l| imports.name(l)).collect();
         let loader = loader.map_or("null".to_string(), |l| imports.name(l));
-        format!(
-            "{{ id: {}, kind: {}, mod: {{ page: {page}, layouts: [{}] }}, loader: {loader} }}",
-            js_str(id),
-            js_str(kind_of(input, id)),
-            layouts.join(", ")
-        )
+        let module = if info(input, id).ssr {
+            let page = imports.name(file);
+            let layouts: Vec<String> = layouts.iter().map(|l| imports.name(l)).collect();
+            format!("{{ page: {page}, layouts: [{}] }}", layouts.join(", "))
+        } else {
+            "null".to_string()
+        };
+        format!("{{ id: {}, kind: {}, mod: {module}, loader: {loader} }}", js_str(id), js_str(kind_of(input, id)))
     };
 
     let mut routes = Vec::new();
@@ -230,8 +248,10 @@ fn server_entry_source(input: &EmitInput<'_>) -> String {
     out.push_str(&imports.code);
     let _ = write!(
         out,
-        "\ncreateServer({{\n  dev: {},\n  renderers: {renderers},\n  routes: [\n    {}\n  ],\n  notFound: {not_found},\n  apis: [{}],\n}});\n",
+        "\ncreateServer({{\n  dev: {},\n  links: {},\n  renderers: {renderers},\n  routes: [\n    {}\n  ],\n  notFound: {not_found},\n  apis: [{}],\n}});\n",
         input.mode.is_dev(),
+        // Single-file builds are prerendered for hash routing: render `#/path` links.
+        js_str(if input.target == Target::SingleHtml { "hash" } else { "history" }),
         routes.join(",\n    "),
         apis.join(", "),
     );
@@ -366,7 +386,7 @@ mod tests {
         }
     }
 
-    fn emit_fixture(name: &str, kinds: &BTreeMap<String, PageKind>, target: Target) -> (PathBuf, Generated) {
+    fn emit_fixture(name: &str, pages: &BTreeMap<String, PageInfo>, target: Target) -> (PathBuf, Generated) {
         let root = std::env::temp_dir().join(format!("forge-gen-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join(".forge/generated");
@@ -375,7 +395,7 @@ mod tests {
             root: &root,
             dir: &dir,
             table: &table,
-            kinds,
+            pages,
             mode: Mode::Prod,
             target,
             static_data: None,
@@ -386,8 +406,11 @@ mod tests {
 
     #[test]
     fn emits_server_and_client_entries() {
-        let kinds = BTreeMap::from([("route_home".to_string(), PageKind::React)]);
-        let (root, generated) = emit_fixture("entries", &kinds, Target::Server);
+        let pages = BTreeMap::from([
+            ("route_home".to_string(), PageInfo { kind: PageKind::React, ssr: true }),
+            ("route_blog_slug".to_string(), PageInfo { kind: PageKind::React, ssr: true }),
+        ]);
+        let (root, generated) = emit_fixture("entries", &pages, Target::Server);
         let server = std::fs::read_to_string(&generated.server_entry).unwrap();
         let client = std::fs::read_to_string(&generated.client_entry).unwrap();
         let route = std::fs::read_to_string(root.join(".forge/generated/routes/route_blog_slug.client.js")).unwrap();
@@ -415,15 +438,18 @@ mod tests {
 
     #[test]
     fn vanilla_apps_do_not_import_react() {
-        let kinds: BTreeMap<String, PageKind> = ["route_home", "route_blog_slug", NOT_FOUND_ID]
+        let pages: BTreeMap<String, PageInfo> = ["route_home", "route_blog_slug", NOT_FOUND_ID]
             .iter()
-            .map(|id| (id.to_string(), PageKind::Vanilla))
+            .map(|id| (id.to_string(), PageInfo { kind: PageKind::Vanilla, ssr: *id != "route_home" }))
             .collect();
-        let (root, generated) = emit_fixture("vanilla", &kinds, Target::SingleHtml);
+        let (root, generated) = emit_fixture("vanilla", &pages, Target::SingleHtml);
         let server = std::fs::read_to_string(&generated.server_entry).unwrap();
         let client = std::fs::read_to_string(&generated.client_entry).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
         assert!(!server.contains("react") && !client.contains("react-client"));
+        // Client-only pages are not imported by the server bundle at all.
+        assert!(server.contains(r#"{ id: "route_home", kind: "vanilla", mod: null, loader: null }"#));
+        assert!(!server.contains("\"../../app/page.tsx\""));
         assert!(client.contains(r#"mode: "hash""#) && client.contains(r#"data: "inline""#));
     }
 }

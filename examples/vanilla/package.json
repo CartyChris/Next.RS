@@ -1,0 +1,10 @@
+{
+  "name": "forge-vanilla",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "forge dev",
+    "build": "forge build",
+    "start": "forge start"
+  }
+}

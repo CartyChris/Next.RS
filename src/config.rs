@@ -5,7 +5,7 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -127,6 +127,8 @@ pub struct ServerConfig {
     pub cpu_ms: u64,
     pub max_body_bytes: usize,
     pub page_cache_entries: usize,
+    /// One line per request on stdout (always on in `forge dev`).
+    pub access_log: bool,
 }
 
 impl Default for ServerConfig {
@@ -142,6 +144,7 @@ impl Default for ServerConfig {
             cpu_ms: 2_000,
             max_body_bytes: 1 << 20,
             page_cache_entries: 1024,
+            access_log: false,
         }
     }
 }
@@ -181,9 +184,84 @@ pub struct BuildConfig {
     /// Defaults to true in dev builds.
     pub sourcemap: Option<bool>,
     /// single-html: ship the script deflated and inflate it in the browser.
-    pub compress: bool,
+    /// `"auto"` (default) does so when it makes the file meaningfully smaller.
+    pub compress: Compress,
     /// Extra compile-time replacements, e.g. `{"__VERSION__": "\"1.2.3\""}`.
     pub define: BTreeMap<String, String>,
+}
+
+impl Config {
+    /// Directories are relative paths inside the project. Build outputs are deleted and
+    /// rewritten on every build, so they may not be the project itself or overlap sources.
+    pub fn check_dirs(&self) -> Result<()> {
+        let rel = |name: &str, v: &str| -> Result<PathBuf> {
+            let p = Path::new(v);
+            let inside =
+                !p.is_absolute() && p.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+            let norm: PathBuf = p.components().filter(|c| matches!(c, Component::Normal(_))).collect();
+            if !inside || norm.as_os_str().is_empty() {
+                bail!(
+                    "`{name}` must be a folder inside the project, like \"{}\" (got {v:?})",
+                    name.trim_end_matches("Dir")
+                );
+            }
+            Ok(norm)
+        };
+        let sources = [("appDir", rel("appDir", &self.app_dir)?), ("publicDir", rel("publicDir", &self.public_dir)?)];
+        let outputs = [("outDir", rel("outDir", &self.out_dir)?), ("distDir", rel("distDir", &self.dist_dir)?)];
+        let overlap = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
+        for (out_name, out) in &outputs {
+            for (src_name, src) in &sources {
+                if overlap(out, src) {
+                    bail!(
+                        "`{out_name}` ({}) overlaps `{src_name}` ({}): build output is deleted and rewritten",
+                        out.display(),
+                        src.display()
+                    );
+                }
+            }
+        }
+        if overlap(&outputs[0].1, &outputs[1].1) {
+            bail!("`outDir` and `distDir` must not overlap");
+        }
+        Ok(())
+    }
+}
+
+/// `build.compress`: `true`, `false` or `"auto"`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Compress {
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl Serialize for Compress {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Compress::Auto => s.serialize_str("auto"),
+            Compress::On => s.serialize_bool(true),
+            Compress::Off => s.serialize_bool(false),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Compress {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Str(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Bool(true) => Ok(Compress::On),
+            Raw::Bool(false) => Ok(Compress::Off),
+            Raw::Str(s) if s == "auto" => Ok(Compress::Auto),
+            Raw::Str(s) => Err(serde::de::Error::custom(format!("expected true, false or \"auto\", found {s:?}"))),
+        }
+    }
 }
 
 /// A resolved project: root directory + config + the knobs a single build needs.
@@ -205,6 +283,7 @@ impl Project {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
+        config.check_dirs().with_context(|| format!("invalid {}", path.display()))?;
         Ok(Self { root, config, target, mode })
     }
 
@@ -223,12 +302,42 @@ impl Project {
     pub fn generated_dir(&self) -> PathBuf {
         self.out_dir().join("generated")
     }
+    /// The variables listed in `server.env`, from the process environment or else `.env`.
+    pub fn server_env(&self) -> std::collections::HashMap<String, String> {
+        let file = std::fs::read_to_string(self.root.join(".env")).map(|t| parse_dotenv(&t)).unwrap_or_default();
+        self.config
+            .server
+            .env
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().or_else(|| file.get(k).cloned()).map(|v| (k.clone(), v)))
+            .collect()
+    }
+
     pub fn minify(&self) -> bool {
         self.config.build.minify.unwrap_or(!self.mode.is_dev())
     }
     pub fn sourcemap(&self) -> bool {
         self.config.build.sourcemap.unwrap_or(self.mode.is_dev()) && self.target == Target::Server
     }
+}
+
+/// `KEY=value` lines; `#` comments, optional `export `, optional matching quotes.
+pub fn parse_dotenv(text: &str) -> std::collections::HashMap<String, String> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (k, v) = line.strip_prefix("export ").unwrap_or(line).split_once('=')?;
+            let v = v.trim();
+            let v = match (v.chars().next(), v.chars().last()) {
+                (Some(q @ ('"' | '\'')), Some(e)) if q == e && v.len() >= 2 => &v[1..v.len() - 1],
+                _ => v.split(" #").next().unwrap_or(v).trim(),
+            };
+            Some((k.trim().to_string(), v.to_string()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -255,6 +364,46 @@ mod tests {
         assert!(matches!(c.security.csp, Some(Csp::Enabled(false))));
         let c: Config = serde_json::from_str(r#"{"security":{"csp":"default-src 'none'"}}"#).unwrap();
         assert!(matches!(c.security.csp, Some(Csp::Custom(_))));
+    }
+
+    #[test]
+    fn directories_stay_inside_the_project() {
+        let with = |field: &str, value: &str| {
+            let c: Config =
+                serde_json::from_str(&format!(r#"{{"{field}":{}}}"#, serde_json::to_string(value).unwrap())).unwrap();
+            c.check_dirs()
+        };
+        assert!(Config::default().check_dirs().is_ok());
+        assert!(with("distDir", "build/site").is_ok() && with("distDir", "./out").is_ok());
+        for bad in ["/", "/tmp/x", "..", "../elsewhere", "dist/../..", ".", "", "app", "app/dist", ".forge/dist"] {
+            assert!(with("distDir", bad).is_err(), "distDir {bad:?}");
+        }
+        assert!(
+            with("outDir", "/var/lib").is_err()
+                && with("outDir", "public").is_err()
+                && with("appDir", "../src").is_err()
+        );
+        assert!(with("publicDir", ".").is_err(), "the whole project must not be public");
+    }
+
+    #[test]
+    fn compress_accepts_bool_or_auto() {
+        let parse = |j: &str| serde_json::from_str::<Config>(&format!(r#"{{"build":{{"compress":{j}}}}}"#));
+        assert_eq!(Config::default().build.compress, Compress::Auto);
+        assert_eq!(parse("true").unwrap().build.compress, Compress::On);
+        assert_eq!(parse("false").unwrap().build.compress, Compress::Off);
+        assert_eq!(parse(r#""auto""#).unwrap().build.compress, Compress::Auto);
+        assert!(parse(r#""yes""#).unwrap_err().to_string().contains("expected true, false or \"auto\""));
+    }
+
+    #[test]
+    fn dotenv() {
+        let env = parse_dotenv("# c\nA=1\nexport B=\"two words\"\nC='x' \nD=y # note\nbad line\n");
+        assert_eq!(env["A"], "1");
+        assert_eq!(env["B"], "two words");
+        assert_eq!(env["C"], "x");
+        assert_eq!(env["D"], "y");
+        assert_eq!(env.len(), 4);
     }
 
     #[test]

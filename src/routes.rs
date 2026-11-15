@@ -5,8 +5,8 @@
 //! ```text
 //! app/page.{tsx,jsx,ts,js}        page (universal: server + client)
 //! app/layout.{tsx,jsx,ts,js}      layout wrapping every page below it
-//! app/loader.{ts,js}              server-only data loader for the page beside it
-//! app/api/x/route.{ts,js}         server-only HTTP endpoint
+//! app/loader.{ts,tsx,js,jsx}      server-only data loader for the page beside it
+//! app/api/x/route.{ts,tsx,js,jsx} server-only HTTP endpoint
 //! app/not-found.{tsx,jsx,ts,js}   404 page (app root only)
 //! app/blog/[slug]/                dynamic segment
 //! app/docs/[...path]/             catch-all (one or more segments)
@@ -25,7 +25,7 @@ use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 
 pub const COMPONENT_EXTS: &[&str] = &["tsx", "jsx", "ts", "js"];
-pub const MODULE_EXTS: &[&str] = &["ts", "js"];
+pub const MODULE_EXTS: &[&str] = &["ts", "tsx", "js", "jsx"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", content = "v", rename_all = "lowercase")]
@@ -92,8 +92,10 @@ pub fn scan(root: &Path, app_dir: &Path) -> Result<RouteTable> {
     if !app_dir.is_dir() {
         bail!("app directory `{}` not found", app_dir.display());
     }
-    let mut table = RouteTable::default();
-    table.not_found = find(app_dir, "not-found", COMPONENT_EXTS).map(|p| rel(root, &p));
+    let mut table = RouteTable {
+        not_found: find(app_dir, "not-found", COMPONENT_EXTS).map(|p| rel(root, &p)),
+        ..Default::default()
+    };
     walk(root, app_dir, &mut Vec::new(), &mut Vec::new(), &mut table)?;
     table.root_layouts = find(app_dir, "layout", COMPONENT_EXTS).map(|p| rel(root, &p)).into_iter().collect();
 

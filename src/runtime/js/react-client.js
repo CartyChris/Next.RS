@@ -10,6 +10,7 @@ export function mount(el, store, hydrate) {
   if (hydrate) {
     root = hydrateRoot(el, app, { onRecoverableError: (e) => console.warn("[forge] hydration:", e) });
   } else {
+    el.textContent = "";
     root = createRoot(el);
     root.render(app);
   }

@@ -1,6 +1,7 @@
 [package]
 name = "nextrs"
-version = "0.1.0"
+version = "0.2.0"
+authors = ["CartyChris <https://github.com/CartyChris>"]
 edition = "2024"
 rust-version = "1.87"
 description = "Next.RS (Forge): a Rust-native React meta-framework. In-process Rolldown bundling, embedded QuickJS SSR, single-file HTML export."
@@ -13,40 +14,59 @@ name = "forge"
 path = "src/main.rs"
 
 [features]
-default = ["fetch", "mimalloc"]
+default = ["fetch", "pack", "mimalloc"]
 # Outbound `fetch()` for loaders and API routes (allowlisted per capsule).
 fetch = ["dep:reqwest"]
+# `forge pack`: turn an HTML page or a component file into one offline HTML file
+# (npm packages for CDN URLs, HTTP for the rest).
+pack = ["fetch", "reqwest/gzip", "dep:encoding_rs", "dep:lol_html", "dep:tar", "dep:sha2", "dep:sha1", "dep:nodejs-semver"]
 # Tests that need `npm install` in examples/ (React SSR, three.js bundle).
 e2e = []
 
 [dependencies]
 anyhow = "1"
-axum = { version = "0.8", default-features = false, features = ["http1", "http2", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "tokio", "ws"] }
 base64 = "0.22"
 blake3 = "1"
 brotli = "8"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
+encoding_rs = { version = "0.8", optional = true }
 flate2 = "1"
-futures-util = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 getrandom = "0.3"
+lol_html = { version = "3", optional = true }
 mimalloc = { version = "0.1", optional = true }
+nodejs-semver = { version = "4", optional = true }
 notify = "8"
-oxc = { version = "=0.158.0", features = ["ast_visit"] }
+oxc = { version = "=0.158.0", features = ["ast_visit", "semantic", "transformer", "codegen"] }
 percent-encoding = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"], optional = true }
 rolldown = "=1.3.2"
 rolldown_common = "=1.3.2"
 rquickjs = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+tar = { version = "0.4", default-features = false, optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs", "signal"] }
 url = "2"
 
 [dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 lto = "thin"
 codegen-units = 4
 strip = true
+
+# Optimized but quick to rebuild: `cargo build --profile fast` for benchmarking iterations.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false

@@ -1,0 +1,46 @@
+name: Forge UI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/forge-ui.yml"
+      - "packages/forge-ui/**"
+      - "examples/ui-showcase/**"
+      - "tests/browser/forge-ui.mjs"
+      - "tests/browser/package.json"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  showcase:
+    name: TypeScript and browser behavior
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      FORGE_UI_REQUIRE_AXE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install and type-check the showcase
+        working-directory: examples/ui-showcase
+        run: |
+          npm ci --install-links --no-audit --no-fund
+          npm run typecheck
+      - name: Build Forge
+        run: cargo build --locked
+      - name: Install the browser test tools
+        working-directory: tests/browser
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund axe-core@4.14.0
+          npx playwright install --with-deps chromium
+      - name: Check SSR, static HTML, and offline HTML
+        run: node tests/browser/forge-ui.mjs

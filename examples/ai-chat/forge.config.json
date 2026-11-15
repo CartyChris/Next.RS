@@ -1,0 +1,8 @@
+{
+  "title": "Forge Chat",
+  "server": {
+    "env": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"],
+    "allowFetch": ["api.openai.com", "localhost", "127.0.0.1"],
+    "timeoutMs": 120000
+  }
+}

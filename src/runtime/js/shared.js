@@ -3,6 +3,8 @@
 // router fill in the late-bound slots.
 export const ROOT_ID = "__forge_root";
 export const DATA_ID = "__FORGE_DATA__";
+export const STATE_ID = "__FORGE_STATE__";
+export const APP_SCRIPT_ID = "__forge_app";
 
 export const rt = {
   mode: "history", // "history" | "hash" (single-file HTML)
@@ -14,6 +16,8 @@ export const rt = {
   navigate: null,
   prefetch: null,
   href: (to) => (rt.mode === "hash" ? `#${to}` : to),
+  // single-html: the document as parsed ({ head, root, state }), for forge:file saveSelf.
+  selfDocument: null,
 };
 
 export function useRoute() {
