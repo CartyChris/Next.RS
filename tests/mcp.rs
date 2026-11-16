@@ -219,6 +219,18 @@ async fn mcp_over_http_for_network_clients() {
         .await
         .unwrap();
     assert_eq!(foreign.status(), 403);
+    // An origin that merely starts with "localhost" is foreign too; a real local page is not.
+    let ping = json!({ "jsonrpc": "2.0", "id": 4, "method": "ping" });
+    let lookalike =
+        client.post(&url).header("origin", "http://localhost.attacker.example").json(&ping).send().await.unwrap();
+    assert_eq!(lookalike.status(), 403);
+    let local = client.post(&url).header("origin", "http://localhost:5173").json(&ping).send().await.unwrap();
+    assert_eq!(local.status(), 200);
+    // DNS rebinding puts the attacker's name in Host; a form-style body needs no preflight.
+    let rebound = client.post(&url).header("host", "attacker.example").json(&ping).send().await.unwrap();
+    assert_eq!(rebound.status(), 403);
+    let plain = client.post(&url).header("content-type", "text/plain").body(ping.to_string()).send().await.unwrap();
+    assert_eq!(plain.status(), 415);
     let _ = child.kill();
     let _ = child.wait();
 }

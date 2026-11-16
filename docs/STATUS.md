@@ -8,7 +8,7 @@ Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ repla
 
 | | Handoff assessment | Now |
 |---|---|---|
-| Compiling crate, `cargo fmt/check/test` | not run | ✅ fmt, clippy `-D warnings`, 116 Rust tests, two browser suites |
+| Compiling crate, `cargo fmt/check/test` | not run | ✅ fmt, clippy `-D warnings`, 117 Rust tests, two browser suites |
 | Rolldown e2e | blocked | ✅ in-process, every build |
 | SSR app served end to end | not done | ✅ streaming React SSR + hydration in Chromium |
 | `/_forge/data` | design | ✅ |

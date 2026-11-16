@@ -769,21 +769,74 @@ pub async fn serve_stdio() -> Result<()> {
     .await?
 }
 
+/// The host name in an `Origin` (`scheme://host:port`) or `Host` (`host:port`) header value,
+/// without scheme, port or IPv6 brackets. `None` for values with no host, such as `null`.
+fn header_host(value: &str) -> Option<&str> {
+    let authority = value.split_once("://").map_or(value, |(_, rest)| rest);
+    let authority = authority.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split_once(']')?.0
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) if port.bytes().all(|b| b.is_ascii_digit()) => host,
+            _ => authority,
+        }
+    };
+    (!host.is_empty()).then_some(host)
+}
+
+/// Exactly `localhost` or a loopback address. A prefix test would accept
+/// `localhost.attacker.example`.
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Why a browser-borne request to the HTTP endpoint is refused, if it is.
+///
+/// A web page must not be able to drive these tools (some write files). Three checks close
+/// the ways it could: the `Origin` must be a loopback origin; while the server listens on
+/// loopback only, the `Host` must be loopback too, which defeats DNS rebinding; and the body
+/// must be declared as JSON, which a page cannot send cross-origin without a preflight that
+/// this server never approves.
+fn refuse_http(
+    origin: Option<&str>,
+    host: Option<&str>,
+    content_type: Option<&str>,
+    loopback_only: bool,
+) -> Option<(u16, &'static str)> {
+    if origin.is_some_and(|o| !header_host(o).is_some_and(is_loopback_host)) {
+        return Some((403, "cross-origin requests are not allowed"));
+    }
+    if loopback_only && host.is_some_and(|h| !header_host(h).is_some_and(is_loopback_host)) {
+        return Some((403, "this server answers only to a loopback Host; use --host to serve other names"));
+    }
+    let json = content_type
+        .and_then(|v| v.split(';').next())
+        .is_some_and(|media| media.trim().eq_ignore_ascii_case("application/json"));
+    if !json {
+        return Some((415, "send the JSON-RPC message with Content-Type: application/json"));
+    }
+    None
+}
+
 /// Serve MCP over Streamable HTTP (stateless JSON): `POST /mcp` with one JSON-RPC message,
-/// or a batch. Browsers are refused unless they come from localhost (DNS rebinding).
+/// or a batch. Requests a web page could have made are refused (see [`refuse_http`]).
 pub async fn serve_http(host: &str, port: u16) -> Result<()> {
     use axum::{
         Router,
         body::Bytes,
-        http::{HeaderMap, StatusCode, header},
+        http::{HeaderMap, StatusCode, Uri, header},
         response::IntoResponse,
         routing::post,
     };
 
-    async fn endpoint(headers: HeaderMap, body: Bytes) -> axum::response::Response {
-        let local = |v: &str| ["http://localhost", "http://127.0.0.1", "http://[::1]"].iter().any(|p| v.starts_with(p));
-        if headers.get("origin").and_then(|v| v.to_str().ok()).is_some_and(|o| !local(o)) {
-            return (StatusCode::FORBIDDEN, "cross-origin requests are not allowed").into_response();
+    async fn endpoint(loopback_only: bool, uri: Uri, headers: HeaderMap, body: Bytes) -> axum::response::Response {
+        let text = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+        // HTTP/2 carries the host in the request target instead of a Host header.
+        let host = text("host").or_else(|| uri.authority().map(|a| a.as_str()));
+        if let Some((status, why)) = refuse_http(text("origin"), host, text("content-type"), loopback_only) {
+            return (StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN), why).into_response();
         }
         let reply = match serde_json::from_slice::<Value>(&body) {
             Err(e) => Some(err(&Value::Null, -32700, format!("Parse error: {e}"))),
@@ -803,9 +856,14 @@ pub async fn serve_http(host: &str, port: u16) -> Result<()> {
         }
     }
 
-    let app = Router::new().route("/mcp", post(endpoint).get(|| async { StatusCode::METHOD_NOT_ALLOWED }));
     let listener =
         tokio::net::TcpListener::bind((host, port)).await.with_context(|| format!("binding {host}:{port}"))?;
+    let loopback_only = listener.local_addr()?.ip().is_loopback();
+    let app = Router::new().route(
+        "/mcp",
+        post(move |uri: Uri, headers: HeaderMap, body: Bytes| endpoint(loopback_only, uri, headers, body))
+            .get(|| async { StatusCode::METHOD_NOT_ALLOWED }),
+    );
     eprintln!("forge mcp → http://{}/mcp", listener.local_addr()?);
     axum::serve(listener, app).await?;
     Ok(())
@@ -814,6 +872,41 @@ pub async fn serve_http(host: &str, port: u16) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_requests_a_web_page_could_send_are_refused() {
+        let json = Some("application/json; charset=utf-8");
+        let status = |origin, host, kind, loopback| refuse_http(origin, host, kind, loopback).map(|r| r.0);
+        // Ordinary clients: no Origin, a loopback Host, a JSON body.
+        assert_eq!(status(None, Some("127.0.0.1:3333"), json, true), None);
+        assert_eq!(status(None, Some("localhost:3333"), json, true), None);
+        assert_eq!(status(None, Some("[::1]:3333"), json, true), None);
+        assert_eq!(status(Some("http://localhost:5173"), Some("127.0.0.1:3333"), json, true), None);
+        assert_eq!(status(Some("https://LOCALHOST"), Some("localhost"), json, true), None);
+        // Origins that only look local.
+        for origin in [
+            "http://localhost.attacker.example",
+            "http://127.0.0.1.attacker.example",
+            "http://localhost@attacker.example",
+            "http://attacker.example/?http://localhost",
+            "https://evil.example",
+            "null",
+            "",
+        ] {
+            assert_eq!(status(Some(origin), Some("127.0.0.1:3333"), json, true), Some(403), "{origin}");
+        }
+        // DNS rebinding: the page's own origin, resolved to loopback, shows in Host.
+        assert_eq!(status(None, Some("attacker.example:3333"), json, true), Some(403));
+        assert_eq!(status(None, Some("localhost.attacker.example"), json, true), Some(403));
+        // Serving other names is an explicit choice (--host); the Origin check still holds.
+        assert_eq!(status(None, Some("tools.internal:3333"), json, false), None);
+        assert_eq!(status(Some("https://evil.example"), Some("tools.internal:3333"), json, false), Some(403));
+        // Bodies a page can post without a preflight.
+        assert_eq!(status(None, Some("127.0.0.1"), Some("text/plain"), true), Some(415));
+        assert_eq!(status(None, Some("127.0.0.1"), None, true), Some(415));
+        assert_eq!(header_host("http://[::1]:8080/x"), Some("::1"));
+        assert_eq!(header_host("example.com:80"), Some("example.com"));
+    }
 
     #[test]
     fn sections_follow_headings_and_skip_code_fences() {

@@ -50,6 +50,45 @@ describe("cart", () => {
                 "lib/format.spec.js",
                 "import { test, expect } from 'forge:test';\ntest('formats like the browser', () => { expect((1234.5).toLocaleString('en-US')).toBe('1,234.5'); });\n",
             ),
+            (
+                "lib/runner.test.ts",
+                r#"import { afterEach, beforeEach, describe, expect, test } from "forge:test";
+
+let open = 0;
+const cleaned: string[] = [];
+
+describe("teardown", () => {
+  beforeEach(() => { open += 1; });
+  afterEach(() => { open -= 1; });
+  afterEach(() => { if (cleaned.length === 1) throw new Error("teardown broke"); });
+  afterEach(() => { cleaned.push("last hook"); });
+
+  test("fails with a resource open", () => { expect(open).toBe(99); });
+  test("starts clean after a failure", () => { expect(open).toBe(1); expect(cleaned).toHaveLength(1); });
+  test("still ran the last hook", () => { expect(cleaned).toHaveLength(2); });
+});
+
+test("hooks stay inside their group", () => { expect(open).toBe(0); expect(cleaned).toHaveLength(3); });
+
+test("built-in objects compare by content", () => {
+  expect(new Date(0)).not.toEqual({});
+  expect({}).not.toEqual(new Date(0));
+  expect(new Map([["id", 1]])).not.toEqual({});
+  expect(/yes/).not.toEqual(/no/);
+  expect([1]).not.toEqual({ 0: 1 });
+  expect(new Uint8Array([1, 2])).not.toEqual(new Uint8Array([1, 3]));
+  expect(new Date(5)).not.toEqual(new Date(6));
+  expect(new Date(5)).toEqual(new Date(5));
+  expect(/a/g).toEqual(/a/g);
+  expect(new Set([1, { x: 2 }])).toEqual(new Set([{ x: 2 }, 1]));
+  expect(new Set([1, 2])).not.toEqual(new Set([1, 3]));
+  expect(new Map([["a", { x: 1 }]])).toEqual(new Map([["a", { x: 1 }]]));
+  expect(new Map([["a", 1]])).not.toEqual(new Map([["a", 2]]));
+  expect(new Uint8Array([1, 2])).toEqual(new Uint8Array([1, 2]));
+  expect(new Error("x")).not.toEqual(new Error("y"));
+});
+"#,
+            ),
             ("lib/broken.test.ts", "import { missing } from './nowhere-at-runtime';\nmissing();\n"),
             (
                 "scripts/report.ts",
@@ -76,7 +115,7 @@ describe("cart", () => {
     let all = script::find_tests(&root, None);
     let names: Vec<String> =
         all.iter().map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().into_owned()).collect();
-    assert_eq!(names, ["lib/broken.test.ts", "lib/cart.test.ts", "lib/format.spec.js"]);
+    assert_eq!(names, ["lib/broken.test.ts", "lib/cart.test.ts", "lib/format.spec.js", "lib/runner.test.ts"]);
     let cart = script::find_tests(&root, Some("cart"));
     assert_eq!(cart.len(), 1);
     let results = script::test(&project, &[cart[0].clone(), root.join("lib/format.spec.js")]).await.unwrap();
@@ -93,6 +132,23 @@ describe("cart", () => {
     );
     assert_eq!(results[2].error, "AssertionError: expected 1 to be 2");
     assert_eq!(results[4].file, "lib/format.spec.js");
+    // Teardown runs after a failing test, every hook runs even if one throws (and that
+    // failure is reported), hooks stay in their group, and built-ins compare by content.
+    let runner = script::test(&project, &[root.join("lib/runner.test.ts")]).await.unwrap();
+    let summary: Vec<(&str, bool)> = runner.iter().map(|r| (r.name.as_str(), r.ok)).collect();
+    assert_eq!(
+        summary,
+        [
+            ("teardown › fails with a resource open", false),
+            ("teardown › starts clean after a failure", false),
+            ("teardown › still ran the last hook", true),
+            ("hooks stay inside their group", true),
+            ("built-in objects compare by content", true),
+        ],
+        "{runner:?}"
+    );
+    assert_eq!(runner[0].error, "AssertionError: expected 1 to be 99");
+    assert_eq!(runner[1].error, "Error: teardown broke");
     // A file that cannot be bundled fails the run with the reason.
     let err = script::test(&project, &all).await.unwrap_err();
     assert!(format!("{err:#}").contains("nowhere-at-runtime"), "{err:#}");

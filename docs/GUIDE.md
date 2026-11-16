@@ -360,7 +360,7 @@ test("the projects API answers with a list", () => {
 });
 ```
 
-`forge:test` has `test` (alias `it`), `test.skip`, `describe`, `beforeEach`, `afterEach` and `expect` with `toBe`, `toEqual`, `toBeTruthy`, `toBeFalsy`, `toBeNull`, `toBeUndefined`, `toBeDefined`, the four number comparisons, `toBeCloseTo`, `toContain`, `toHaveLength`, `toHaveProperty`, `toMatch`, `toBeInstanceOf`, `toThrow`, `.not`, and `await expect(promise).rejects()`. Component rendering in a browser is not part of it; use Playwright for that.
+`forge:test` has `test` (alias `it`), `test.skip`, `describe`, `beforeEach`, `afterEach` and `expect` with `toBe`, `toEqual`, `toBeTruthy`, `toBeFalsy`, `toBeNull`, `toBeUndefined`, `toBeDefined`, the four number comparisons, `toBeCloseTo`, `toContain`, `toHaveLength`, `toHaveProperty`, `toMatch`, `toBeInstanceOf`, `toThrow`, `.not`, and `await expect(promise).rejects()`. `afterEach` hooks run even when the test fails, and hooks registered inside a `describe` apply to that group only. `toEqual` compares dates, maps, sets, regular expressions and typed arrays by content. Component rendering in a browser is not part of it; use Playwright for that.
 
 ## Coding agents: docs, themes and MCP
 
@@ -390,7 +390,7 @@ It also offers the documents as resources (`forge://docs/<name>`, `forge://ui/ty
 { "mcpServers": { "forge": { "command": "forge", "args": ["mcp"] } } }
 ```
 
-Clients that connect over the network use Streamable HTTP: `forge mcp --http 3333` answers `POST /mcp` on `127.0.0.1` (stateless, JSON responses). It refuses requests whose `Origin` is not local; put it behind your own authentication before exposing it with `--host`.
+Clients that connect over the network use Streamable HTTP: `forge mcp --http 3333` answers `POST /mcp` on `127.0.0.1` (stateless, JSON responses). A web page must not be able to drive these tools, so the endpoint refuses what a browser could send on a page's behalf: an `Origin` that is not exactly a loopback origin, a `Host` that is not loopback while the server listens on loopback (DNS rebinding), and any body not sent as `application/json`. Put it behind your own authentication before exposing it with `--host`.
 
 ## Build targets
 
