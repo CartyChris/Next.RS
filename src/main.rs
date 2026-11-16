@@ -83,10 +83,11 @@ enum Command {
     },
     /// Run `*.test.*` and `*.spec.*` files with the built-in `forge:test` API.
     Test {
-        #[arg(default_value = ".")]
-        root: PathBuf,
-        /// Only files whose path contains this text.
-        filter: Option<String>,
+        /// `[dir] [filter]`: the project directory (default: the current one), then text
+        /// that a test file's path must contain. `forge test loader` filters in the
+        /// current project.
+        #[arg(num_args = 0..=2)]
+        args: Vec<String>,
     },
     /// Model Context Protocol server for coding agents: built-in docs, forge:ui lookup,
     /// and tools to create, check, build and pack projects. Speaks stdio by default.
@@ -106,6 +107,11 @@ enum Command {
         /// Print this whole document: agents, guide, ui, design, architecture.
         #[arg(long)]
         read: Option<String>,
+    },
+    /// Find a `forge:ui` look (theme preset) from a description, or list them all.
+    Themes {
+        /// Words describing the look: "frosted glass", "dense admin", "retro console".
+        query: Vec<String>,
     },
     /// One offline HTML file from an HTML page or a component file (`App.tsx`): CDN scripts
     /// and imports come from npm (verified), everything else is downloaded, and all of it is
@@ -334,7 +340,14 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("{output}");
             }
         }
-        Command::Test { root, filter } => {
+        Command::Test { args } => {
+            // A first argument that is not a directory is the filter.
+            let (root, filter) = match args.as_slice() {
+                [] => (PathBuf::from("."), None),
+                [one] if std::path::Path::new(one).is_dir() => (PathBuf::from(one), None),
+                [one] => (PathBuf::from("."), Some(one.clone())),
+                [dir, filter, ..] => (PathBuf::from(dir), Some(filter.clone())),
+            };
             let project = Project::load(&root, Target::Server, Mode::Prod)?;
             let files = build::script::find_tests(&project.root, filter.as_deref());
             if files.is_empty() {
@@ -396,6 +409,11 @@ async fn run(cli: Cli) -> Result<()> {
                     println!("## {} › {}\n\n{}\n", section.doc, section.heading, section.body.trim());
                 }
             }
+        }
+        Command::Themes { query } => {
+            let query = query.join(" ");
+            let (text, _) = nextrs::mcp::themes_text((!query.is_empty()).then_some(query.as_str()));
+            println!("{text}");
         }
         Command::Check { root } => {
             let project = Project::load(&root, Target::Server, Mode::Prod)?;

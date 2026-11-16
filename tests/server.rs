@@ -471,6 +471,11 @@ export async function POST(request, { env, searchParams }) {
 }"#,
             ),
             (
+                "app/api/unset/route.js",
+                r#"import { trigger } from "forge:n8n";
+export const GET = (_request, { env }) => trigger(env.NOT_CONFIGURED, {}).catch((e) => ({ status: e.status, message: e.message }));"#,
+            ),
+            (
                 "app/api/hook/route.js",
                 r#"import { webhook, WorkflowError } from "forge:n8n";
 export const POST = webhook(async ({ body, query }) => {
@@ -499,6 +504,11 @@ export const POST = webhook(async ({ body, query }) => {
     assert!(wrong["message"].as_str().unwrap().contains("authentication"), "{wrong}");
     let inactive = json(&request(&app, Method::POST, "/api/order?path=missing", &[], "{}").await);
     assert!(inactive["message"].as_str().unwrap().contains("is the workflow active"), "{inactive}");
+
+    // A variable that was never set fails with the fix, not with "Invalid URL".
+    let unset = json(&request(&app, Method::GET, "/api/unset", &[], "").await);
+    assert_eq!(unset["status"], 500, "{unset}");
+    assert!(unset["message"].as_str().unwrap().contains("server.env"), "{unset}");
 
     // n8n → app: secret enforced (header or bearer), JSON and form bodies parsed, errors mapped.
     let none = request(&app, Method::POST, "/api/hook", &[], r#"{"id":7}"#).await;

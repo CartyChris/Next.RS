@@ -62,6 +62,14 @@ pub const TEMPLATES: &[(&str, &str, Files)] = &[
 
 const GITIGNORE: &str = "node_modules\n.forge\ndist\n.env\n";
 
+/// Written to every new project as `AGENTS.md`, so a coding agent that opens the project
+/// knows the framework without searching for it.
+const AGENT_GUIDE: &str = include_str!("../docs/AGENT_GUIDE.md");
+
+/// Registers `forge mcp` for clients that read project-level MCP settings.
+const MCP_CONFIG: &str =
+    "{\n  \"mcpServers\": {\n    \"forge\": { \"command\": \"forge\", \"args\": [\"mcp\"] }\n  }\n}\n";
+
 pub fn create(dir: &Path, template: &str) -> Result<()> {
     let Some((_, _, files)) = TEMPLATES.iter().find(|(name, _, _)| *name == template) else {
         let names: Vec<&str> = TEMPLATES.iter().map(|(n, _, _)| *n).collect();
@@ -76,6 +84,8 @@ pub fn create(dir: &Path, template: &str) -> Result<()> {
         std::fs::write(&path, contents).with_context(|| format!("writing {}", path.display()))?;
     }
     std::fs::write(dir.join(".gitignore"), GITIGNORE)?;
+    std::fs::write(dir.join("AGENTS.md"), AGENT_GUIDE)?;
+    std::fs::write(dir.join(".mcp.json"), MCP_CONFIG)?;
     Ok(())
 }
 
@@ -93,6 +103,10 @@ mod tests {
                 crate::config::Project::load(&dir, crate::config::Target::Server, crate::config::Mode::Prod).unwrap();
             let plan = crate::build::plan(&project).unwrap_or_else(|e| panic!("{name}: {e:#}"));
             assert!(!plan.routes.is_empty(), "{name}");
+            assert!(std::fs::read_to_string(dir.join("AGENTS.md")).unwrap().contains("forge check"));
+            let mcp: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(dir.join(".mcp.json")).unwrap()).unwrap();
+            assert_eq!(mcp["mcpServers"]["forge"]["command"], "forge");
             assert!(create(&dir, name).is_err(), "refuses a non-empty directory");
             std::fs::remove_dir_all(&dir).unwrap();
         }

@@ -45,7 +45,15 @@ async function readBody(source) {
  */
 export async function trigger(url, data, options = {}) {
   const { method = "POST", headers = {}, secret, secretHeader = "x-n8n-secret", basicAuth, query, signal, timeoutMs = 30_000 } = options;
-  const target = new URL(url);
+  if (!url) {
+    throw new WorkflowError("No webhook URL: set the variable in .env and list its name in server.env in forge.config.json", 500);
+  }
+  let target;
+  try {
+    target = new URL(url);
+  } catch {
+    throw new WorkflowError(`Not a valid webhook URL: ${url}`, 500);
+  }
   for (const [key, value] of Object.entries(query ?? {})) target.searchParams.set(key, String(value));
   const send = { ...headers };
   if (secret) send[secretHeader] = secret;

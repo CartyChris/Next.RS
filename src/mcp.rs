@@ -20,7 +20,7 @@ const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "
 
 /// Documentation shipped inside the binary: `(name, summary, markdown)`.
 pub const DOCS: &[(&str, &str, &str)] = &[
-    ("agents", "Start here: commands, conventions and pitfalls for agents", include_str!("../AGENTS.md")),
+    ("agents", "Start here: commands, conventions and pitfalls for agents", include_str!("../docs/AGENT_GUIDE.md")),
     (
         "guide",
         "Framework guide: routing, pages, layouts, loaders, API routes, sockets, targets, modules, configuration",
@@ -243,6 +243,41 @@ pub fn find_themes(query: &str) -> Vec<Value> {
         .collect();
     scored.sort_by_key(|r| std::cmp::Reverse(r.0));
     scored.into_iter().map(|(_, t)| t).collect()
+}
+
+/// The answer to "which look fits this description": matching presets (or all of them)
+/// with their settings, followed by how to customize one.
+pub fn themes_text(query: Option<&str>) -> (String, Vec<Value>) {
+    let found = match query {
+        Some(q) => find_themes(q),
+        None => ui_themes(),
+    };
+    let mut text = String::new();
+    if found.is_empty() {
+        text.push_str("No preset matches those words. Build the look from Theme props instead (below), or omit `query` to list every preset.\n\n");
+    }
+    for theme in &found {
+        text.push_str(&format!(
+            "## {} — `<Theme preset=\"{}\">`\n{}\nKeywords: {}\nSettings: `{}`\n\n",
+            theme["label"].as_str().unwrap_or_default(),
+            theme["name"].as_str().unwrap_or_default(),
+            theme["description"].as_str().unwrap_or_default(),
+            theme["keywords"]
+                .as_array()
+                .map(|k| k.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+                .unwrap_or_default(),
+            theme["settings"]
+        ));
+    }
+    text.push_str(
+        "Customize any preset by passing props next to it; they win over the preset:\n\
+         - `accent`: ember, violet, cobalt, verdigris, gold, rose, steel, any CSS color (\"#0a7f5a\"), or a hue 0-360\n\
+         - `radius`: none, sm, md, lg, full    `density`: compact, comfortable, spacious\n\
+         - `surface`: solid or glass    `theme`: system, light, dark\n\
+         - `tokens`: { font, \"font-display\", surface, text, radius, … } for single values\n\
+         Example: `<Theme preset=\"liquid-glass\" accent=\"#ff5a36\" radius=\"full\">`",
+    );
+    (text, found)
 }
 
 // ---- tools ----
@@ -476,36 +511,7 @@ async fn call_tool(name: &str, args: &Value) -> Result<Value> {
             }
         },
         "forge_ui_themes" => {
-            let query = arg_str(args, "query");
-            let found = match query {
-                Some(q) => find_themes(q),
-                None => ui_themes(),
-            };
-            let mut text = String::new();
-            if found.is_empty() {
-                text.push_str("No preset matches those words. Build the look from Theme props instead (below), or omit `query` to list every preset.\n\n");
-            }
-            for theme in &found {
-                text.push_str(&format!(
-                    "## {} — `<Theme preset=\"{}\">`\n{}\nKeywords: {}\nSettings: `{}`\n\n",
-                    theme["label"].as_str().unwrap_or_default(),
-                    theme["name"].as_str().unwrap_or_default(),
-                    theme["description"].as_str().unwrap_or_default(),
-                    theme["keywords"]
-                        .as_array()
-                        .map(|k| k.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
-                        .unwrap_or_default(),
-                    theme["settings"]
-                ));
-            }
-            text.push_str(
-                "Customize any preset by passing props next to it; they win over the preset:\n\
-                 - `accent`: ember, violet, cobalt, verdigris, gold, rose, steel, any CSS color (\"#0a7f5a\"), or a hue 0-360\n\
-                 - `radius`: none, sm, md, lg, full    `density`: compact, comfortable, spacious\n\
-                 - `surface`: solid or glass    `theme`: system, light, dark\n\
-                 - `tokens`: { font, \"font-display\", surface, text, radius, … } for single values\n\
-                 Example: `<Theme preset=\"liquid-glass\" accent=\"#ff5a36\" radius=\"full\">`",
-            );
+            let (text, found) = themes_text(arg_str(args, "query"));
             Ok(text_result(text, Some(json!({ "themes": found }))))
         }
         "forge_templates" => {

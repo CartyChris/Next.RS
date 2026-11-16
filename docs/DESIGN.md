@@ -5,7 +5,7 @@ Rules for building interfaces with Next.RS and `forge:ui` that look considered r
 ## Use the system
 
 1. **Import components from `forge:ui`.** Do not hand-build a button, input, dialog, menu, table or toast: the library versions handle focus, keyboard, contrast, dark mode and small screens.
-2. **Wrap the app in one `Theme`** in `app/layout.tsx`. Choose `accent`, `radius` and `density` there, once.
+2. **Wrap the app in one `Theme`** in `app/layout.tsx`. Choose the look there, once: a `preset` that fits the request (`forge themes <words>` finds one), adjusted with `accent`, `radius` and `density`.
 3. **Style custom parts with tokens**, never with hard-coded colors: `var(--forge-ui-surface)`, `--forge-ui-text`, `--forge-ui-muted`, `--forge-ui-edge`, `--forge-ui-accent`, `--forge-ui-accent-soft`, `--forge-ui-space-1…7`, `--forge-ui-radius`, `--forge-ui-radius-panel`. Hard-coded hex breaks dark mode.
 4. **Lay out with `Container`, `Stack`, `Row` and `Grid`.** Reach for custom CSS only for what they cannot express, in a `.css` file imported by the page.
 5. **Icons come from `Icon`.** Do not use emoji as icons.
@@ -28,7 +28,8 @@ Rules for building interfaces with Next.RS and `forge:ui` that look considered r
 
 These are the marks of generated UI. Do not produce them.
 
-- Purple-to-blue gradients, gradient text, glowing borders, and glass panels over busy backgrounds.
+- Purple-to-blue gradients, gradient text and glowing borders.
+- Hand-rolled glass: translucent panels over a busy photo or gradient, where text loses contrast. When the request is for glass, use `surface="glass"` (or the `liquid-glass` preset), which keeps contrast and falls back to solid panels where blur is unavailable.
 - Emoji in headings, buttons or navigation.
 - Everything centered in a narrow column with oversized rounded cards.
 - A hero section, three feature cards and a call to action when the request was an application.

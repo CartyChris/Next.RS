@@ -248,8 +248,12 @@ declare module "forge:n8n" {
     /** Default 30000. */
     timeoutMs?: number;
   }
-  /** Call an n8n workflow through its Webhook node; resolves with the workflow's response. */
-  export function trigger<T = unknown>(url: string | URL, data?: unknown, options?: TriggerOptions): Promise<T>;
+  /**
+   * Call an n8n workflow through its Webhook node; resolves with the workflow's response.
+   * `url` may come straight from `ctx.env`: a missing value throws a `WorkflowError` that
+   * names the fix.
+   */
+  export function trigger<T = unknown>(url: string | URL | undefined, data?: unknown, options?: TriggerOptions): Promise<T>;
   export interface WebhookEvent<B = any> {
     /** Parsed JSON or form body (`null` for GET). */
     body: B;
