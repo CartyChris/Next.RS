@@ -15,7 +15,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tools = resolve(root, "../../examples/ui-showcase/node_modules");
 const tsc = join(tools, "typescript/bin/tsc");
 if (!existsSync(tsc)) {
-  console.error("typescript not found: run `npm ci --install-links` in examples/ui-showcase first");
+  console.error("typescript not found: run `npm ci` in examples/ui-showcase first");
   process.exit(2);
 }
 const out = join(mkdtempSync(join(tmpdir(), "forge-ui-types-")), "ui.d.ts");

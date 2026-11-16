@@ -222,3 +222,24 @@ async fn mcp_over_http_for_network_clients() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+/// The evaluation set stays answerable: every answer appears in what the server can return.
+#[test]
+fn evaluation_answers_are_in_the_servers_knowledge() {
+    let xml = include_str!("fixtures/mcp/evaluation.xml");
+    let mut corpus: String = nextrs::mcp::DOCS.iter().map(|d| d.2).collect();
+    corpus.push_str(&serde_json::to_string(&nextrs::mcp::ui_themes()).unwrap());
+    let between = |text: &str, open: &str, close: &str| -> Vec<String> {
+        text.split(open).skip(1).filter_map(|rest| rest.split(close).next()).map(|v| v.trim().to_string()).collect()
+    };
+    let questions = between(xml, "<question>", "</question>");
+    let answers = between(xml, "<answer>", "</answer>");
+    assert_eq!((questions.len(), answers.len()), (10, 10));
+    for (question, answer) in questions.iter().zip(&answers) {
+        assert!(question.len() > 40 && !answer.is_empty(), "{question}");
+        assert!(
+            corpus.contains(answer.as_str()),
+            "the answer `{answer}` is not in the docs or the theme catalog: {question}"
+        );
+    }
+}

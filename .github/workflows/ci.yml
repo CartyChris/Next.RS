@@ -41,6 +41,12 @@ jobs:
         working-directory: examples/arena
         run: mkdir -p .forge/types && cp ../../src/runtime/js/forge.d.ts .forge/types/ && npx tsc -p .
       - run: cargo build --release
+      - name: Type-check and test the starter template
+        working-directory: examples/starter
+        run: |
+          ../../target/release/forge check .
+          npx tsc -p .
+          ../../target/release/forge test .
       - name: Browser tests
         working-directory: tests/browser
         run: |
