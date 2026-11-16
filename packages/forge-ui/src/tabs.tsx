@@ -102,3 +102,34 @@ export function Tabs({ items, label, defaultValue, value, onValueChange, classNa
     </div>
   );
 }
+
+export interface AccordionItem {
+  /** Unique across this accordion. */
+  value: string;
+  title: ReactNode;
+  content: ReactNode;
+  defaultOpen?: boolean;
+}
+
+export interface AccordionProps {
+  items: readonly AccordionItem[];
+  /** Allow several sections open at once. By default opening one closes the others. */
+  multiple?: boolean;
+  className?: string;
+}
+
+/** Collapsible sections built on `<details>`, so they work before JavaScript loads. */
+export function Accordion({ items, multiple, className }: AccordionProps) {
+  const name = useId();
+  return (
+    <div className={className ? `forge-ui-accordion ${className}` : "forge-ui-accordion"}>
+      {items.map((item) => (
+        <details key={item.value} className="forge-ui-accordion-item" name={multiple ? undefined : name}
+          open={item.defaultOpen || undefined}>
+          <summary className="forge-ui-accordion-summary">{item.title}</summary>
+          <div className="forge-ui-accordion-content">{item.content}</div>
+        </details>
+      ))}
+    </div>
+  );
+}

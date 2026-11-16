@@ -8,7 +8,7 @@ Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ repla
 
 | | Handoff assessment | Now |
 |---|---|---|
-| Compiling crate, `cargo fmt/check/test` | not run | ✅ fmt, clippy `-D warnings`, 60 Rust tests |
+| Compiling crate, `cargo fmt/check/test` | not run | ✅ fmt, clippy `-D warnings`, 117 Rust tests, two browser suites |
 | Rolldown e2e | blocked | ✅ in-process, every build |
 | SSR app served end to end | not done | ✅ streaming React SSR + hydration in Chromium |
 | `/_forge/data` | design | ✅ |
@@ -59,6 +59,14 @@ Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ repla
 | `forge pack` for component files (React, Preact, `mount(el)`, Tailwind) | `pack/component.rs` | `tests/pack.rs`, Chromium (React 19 + lucide-react + Tailwind offline) |
 | `forge dev --target single-html`, `forge pack --watch` | `server/single.rs` | `tests/single_dev.rs` |
 | Proof-of-life app: Pixel Pad | `examples/pixel` | browser checks |
+| `forge:ui`: 59 components, hue-driven OKLCH palette, radius/density/tokens, eight named looks, glass surface | `packages/forge-ui`, `js/ui.js`, `build/generated.rs` | `tests/browser/forge-ui.mjs` (server, static, single-html; axe; AA contrast for every accent in both schemes; 320px), `tests/build.rs` |
+| `starter` template and the Relay showcase with a component gallery | `examples/starter`, `examples/ui-showcase` | both browser suites |
+| Server `Intl` for `en-US` (numbers, dates in UTC, plurals, relative time, lists) | `js/host.js` | `tests/server.rs::server_intl_matches_browser_en_us` (expected values taken from V8) |
+| `forge mcp` (stdio and Streamable HTTP), `forge docs`, `forge themes` | `src/mcp.rs` | unit tests, `tests/mcp.rs` (a full stdio session and HTTP) |
+| Agent guide and MCP registration written into every new project | `src/scaffold.rs`, `docs/AGENT_GUIDE.md` | `scaffold::tests` |
+| `forge:n8n`: `trigger()` and `webhook()` | `js/n8n.js` | `tests/server.rs::n8n_webhooks_in_both_directions` (fake n8n server) |
+| `forge run`, `forge test`, `forge:test` | `build/script.rs`, `js/test.js` | `tests/script.rs`, `tests/mcp.rs` |
+| `forge check` covers client-only pages | `build/mod.rs` | `tests/mcp.rs` |
 
 ## The 8D fixture, file by file
 

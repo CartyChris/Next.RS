@@ -1,0 +1,48 @@
+<!--
+  Evaluation questions for `forge mcp`. Each is read-only, has one stable answer, and needs
+  the server's tools (docs search and reading, component lookup, theme lookup) rather than
+  prior knowledge. `tests/mcp.rs` checks that every answer still appears in what the server
+  can return, so the file cannot drift from the documentation.
+-->
+<evaluation>
+  <qa_pair>
+    <question>A user asks for an interface that feels like "a retro hacker console". Find the forge:ui look that matches and report the radius setting of that look.</question>
+    <answer>none</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the forge:ui look meant for frosted, Apple-style translucent panels. Which named accent does that look use?</question>
+    <answer>cobalt</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>A team wants a dense admin panel. Find the matching forge:ui look and report its density setting.</question>
+    <answer>compact</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>An API route built with webhook() from forge:n8n is configured with a secret but no custom header name. Which HTTP request header must the caller put the secret in?</question>
+    <answer>x-n8n-secret</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In a Next.RS app with WebSocket rooms, the JavaScript worker that owns a room is replaced after a crash. With which WebSocket close code are that worker's sockets closed?</question>
+    <answer>1012</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Single-file builds store their compressed script as text inside the HTML file. What is the name of the text encoding used instead of base64?</question>
+    <answer>base-122</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Look up the forge:ui component for icon-only buttons. Which prop gives it its accessible name?</question>
+    <answer>label</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>According to the design rules, numbers in a table should be right-aligned. What value of a Table column's align option does that?</question>
+    <answer>end</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which forge new template do the agent instructions name as the default choice for applications?</question>
+    <answer>starter</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The server-side Intl implementation formats dates in one fixed time zone. Which time zone should dates be formatted with so that server and browser output match?</question>
+    <answer>UTC</answer>
+  </qa_pair>
+</evaluation>

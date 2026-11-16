@@ -12,5 +12,5 @@
     "allowArbitraryExtensions": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["app", "../../src/runtime/js/forge.d.ts"]
+  "include": ["app", ".forge/types"]
 }

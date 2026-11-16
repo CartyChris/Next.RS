@@ -299,6 +299,58 @@ try {
   p = await offline();
   await p.goto("file://" + join(packs, "sketch.html"));
   check("pack script: mount(el) receives the root", (await p.evaluate(() => window.__mounted)) === "root" && (await p.$("#sketch")) !== null);
+
+  // Starter: the forge:ui app shell, server-rendered, then as one offline file.
+  build("starter", "server");
+  base = await start("starter");
+  p = await page(browser, { viewport: { width: 1200, height: 800 } });
+  await p.goto(base + "/");
+  await p.getByRole("heading", { level: 1, name: "Projects" }).waitFor();
+  const mainNav = p.getByRole("navigation", { name: "Main" });
+  check("starter: sidebar marks the current page", (await mainNav.getByRole("link", { name: "Projects" }).getAttribute("aria-current")) === "page");
+  check("starter: loader data fills the table", (await p.getByRole("table", { name: "All projects" }).locator("tbody tr").count()) === 4);
+  const rows = p.getByRole("table", { name: "All projects" }).locator("tbody tr");
+  // The field exists before hydration; retry until React owns it.
+  for (let i = 0; i < 40 && (await rows.count()) !== 1; i++) {
+    await p.getByRole("searchbox", { name: "Filter projects" }).fill("");
+    await p.getByRole("searchbox", { name: "Filter projects" }).fill("com");
+    await p.waitForTimeout(50);
+  }
+  check("starter: filtering is hydrated", (await rows.count()) === 1);
+  check("starter: numbers format the same on the server and in the browser",
+    (await rows.first().locator("td").last().textContent()) === "5,312");
+  await mainNav.getByRole("link", { name: "Settings" }).click();
+  await p.getByRole("heading", { level: 1, name: "Settings" }).waitFor();
+  check("starter: client navigation keeps the shell", p.url().endsWith("/settings") && (await mainNav.getByRole("link", { name: "Settings" }).getAttribute("aria-current")) === "page");
+  await p.getByRole("textbox", { name: "Workspace name" }).fill("x");
+  await p.getByRole("button", { name: "Save settings" }).click();
+  check("starter: form validation message", await p.getByText("Use at least 2 characters.").isVisible());
+  check("starter: no console errors", p.errors.length === 0, JSON.stringify(p.errors));
+  const api = await (await fetch(base + "/api/projects")).json();
+  check("starter: API route", api.projects.length === 4);
+  build("starter", "single-html");
+  p = await page(browser, { viewport: { width: 390, height: 800 } });
+  await p.goto("file://" + join(examples, "starter/dist/index.html"));
+  await p.getByRole("heading", { level: 1, name: "Projects" }).waitFor();
+  check("starter offline: sidebar collapses on a phone", !(await p.locator(".forge-ui-shell-sidebar").isVisible()));
+  for (let i = 0; i < 40 && !(await p.getByRole("dialog").isVisible()); i++) {
+    await p.getByRole("button", { name: "Open navigation" }).click();
+    await p.waitForTimeout(100);
+  }
+  await p.getByRole("dialog").getByRole("link", { name: "Settings" }).click();
+  await p.getByRole("heading", { level: 1, name: "Settings" }).waitFor();
+  check("starter offline: drawer navigation routes with the hash and closes", p.url().endsWith("#/settings") && !(await p.getByRole("dialog").isVisible()));
+  check("starter offline: no network, no errors", p.requests.every((u) => /^(file|blob|data):/.test(u)) && !p.errors.length, JSON.stringify([p.requests, p.errors]));
+
+  // A single component that imports forge:ui packs into one offline file.
+  pack(join(fixtures, "component/Dash.tsx"), join(packs, "dash.html"));
+  p = await offline();
+  await p.goto("file://" + join(packs, "dash.html"));
+  await p.getByRole("button", { name: "More" }).click();
+  check("pack component: forge:ui components and styles work offline",
+    (await p.locator(".forge-ui-stat-value").textContent()) === "4" &&
+      (await p.evaluate(() => getComputedStyle(document.querySelector(".forge-ui-card")).borderTopWidth)) === "1px");
+  check("pack forge:ui: no network, no errors", !p.blocked.length && !p.errors.length, JSON.stringify([p.blocked, p.errors]));
 } catch (e) {
   failures.push(String(e?.stack ?? e));
   console.error(e);

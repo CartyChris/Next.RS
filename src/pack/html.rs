@@ -304,8 +304,11 @@ pub async fn pack(p: &Arc<Packer>, html: &str) -> Result<String> {
     if let Some(i) = first_module {
         let bundled = p.bundle_modules(modules, import_map, &base).await?;
         let mut html = String::new();
+        let mut inflates = false;
         if !bundled.css.trim().is_empty() {
-            html.push_str(&style_element(p, &[], &bundled.css).0);
+            let (style, packed) = style_element(p, &[], &bundled.css);
+            html.push_str(&style);
+            inflates = packed;
         }
         let (script, compressed) = single_file_script(&bundled.js, p.options.compress, None);
         html.push_str(&script);
@@ -314,7 +317,7 @@ pub async fn pack(p: &Arc<Packer>, html: &str) -> Result<String> {
             bundled.js.len() / 1024,
             if compressed { ", compressed" } else { "" }
         ));
-        outs.insert(i, Out::edit(Edit::Replace(html)));
+        outs.insert(i, Out { edits: vec![Edit::Replace(html)], tail: None, inflates });
     }
 
     // The inflater goes with the first element that needs it.

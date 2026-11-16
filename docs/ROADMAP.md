@@ -10,7 +10,7 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 4. **CSS Modules and `url()` in CSS.** Run CSS through Lightning CSS: modules, nesting, minification, and asset URLs inside stylesheets (today: plain global CSS; reference assets from JS or `public/`).
 5. **`basePath`.** Serve static builds from a sub-path (GitHub Pages project sites).
 6. **HTTP range requests** for `public/` media (video/audio seeking).
-7. **Form actions / mutations.** A typed `action` export next to loaders, with progressive enhancement for `<form>`.
+7. **Form actions / mutations.** A typed `action` export next to loaders, with progressive enhancement for `<form>` and a `Form` component in `forge:ui` that shows pending and error states.
 8. **Cookies and sessions.** `ctx.cookies` read/write helpers; an auth example.
 
 ## Runtime
@@ -20,7 +20,7 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 11. **Request-scoped cache** (dedupe identical `fetch`/`cache()` calls within one render) and a **disk or Redis backend** for `forge:cache` and the page cache.
 12. **Structured logs and metrics.** JSON request logs, per-route latency histograms, worker recycle counters, a `/health/details` endpoint.
 13. **Process isolation mode.** Run JS workers in child processes (optionally under cgroups/seccomp) for multi-tenant hosting.
-14. **`Intl` in server code.** Bundle a small Intl polyfill when the app uses `Intl` APIs, so server and client format identically.
+14. **More `Intl` locales on the server.** `en-US` is built in; add locale data on demand (`"build": { "locales": ["de", "ja"] }`) and a configurable time zone.
 
 ## Build and targets
 
@@ -38,6 +38,14 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 23. **Durable rooms**: persist socket-room state across worker restarts and deploys.
 24. **WebGPU example** and a compute-shader template.
 
+## Interface and agents
+
+30. **More `forge:ui` components**: date picker, combobox with async options, tree view, resizable panels, charts that follow the theme tokens.
+31. **Look editor**: export the gallery's theme controls as a `Theme` snippet and a tokens file; import a brand palette from an image.
+32. **Component tests in `forge test`**: render a page through the server renderer and assert on the HTML, without a browser.
+33. **`forge mcp` project resources**: expose the route table and build errors of a running `forge dev` as subscribable resources.
+34. **n8n community node** that wraps `forge mcp --http` and the webhook conventions of `forge:n8n`.
+
 ## Single files
 
 25. **Workers in `forge pack`.** Bundle `new Worker(new URL("./w.js", import.meta.url))` from packed pages the way single-html builds do (classic IIFE + Worker shim).
@@ -48,4 +56,4 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 
 ## Done (this repository)
 
-Compiling crate and tests, in-process Rolldown, QuickJS SSR worker pool, streaming SSR, data endpoint, API routes, server/static/single-html targets, page cache, security scan and CSP, dev server with live reload and error overlay, request cancellation, WebSocket rooms with Rust pub/sub, Web Worker and asset URL bundling, provider-agnostic AI chat and agents, automatic single-file compression, `forge:file` self-saving documents, `forge pack` for pages and component files, live single-file dev loops, seven examples including Forge Arena and Pixel Pad, CI. See [STATUS.md](STATUS.md).
+Compiling crate and tests, in-process Rolldown, QuickJS SSR worker pool, streaming SSR, data endpoint, API routes, server/static/single-html targets, page cache, security scan and CSP, dev server with live reload and error overlay, request cancellation, WebSocket rooms with Rust pub/sub, Web Worker and asset URL bundling, provider-agnostic AI chat and agents, automatic single-file compression, `forge:file` self-saving documents, `forge pack` for pages and component files, live single-file dev loops, the built-in `forge:ui` component library with named looks and a glass surface, server `Intl` for `en-US`, `forge mcp` / `forge docs` / `forge themes` for coding agents, `forge:n8n`, `forge run` and `forge test`, nine examples including Forge Arena, Pixel Pad, the starter and the Relay showcase, CI. See [STATUS.md](STATUS.md).

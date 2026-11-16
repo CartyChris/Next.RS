@@ -30,13 +30,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install and type-check the showcase
+      - name: Install the showcase
         working-directory: examples/ui-showcase
-        run: |
-          npm ci --install-links --no-audit --no-fund
-          npm run typecheck
+        run: npm ci --no-audit --no-fund
+      - name: Check that the generated forge:ui types are current
+        run: node packages/forge-ui/scripts/build-types.mjs --check
       - name: Build Forge
         run: cargo build --locked
+      - name: Type-check the showcase against the built-in types
+        working-directory: examples/ui-showcase
+        run: |
+          ../../target/debug/forge check .
+          npm run typecheck
       - name: Install the browser test tools
         working-directory: tests/browser
         run: |

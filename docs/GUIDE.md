@@ -12,6 +12,10 @@ Everything an app author needs. For how it works inside, see [ARCHITECTURE.md](A
 - [WebSockets and rooms](#websockets-and-rooms)
 - [Web Workers, WASM and models](#web-workers-wasm-and-models)
 - [AI: chat, tools and agents](#ai-chat-tools-and-agents)
+- [Automation: n8n and webhooks](#automation-n8n-and-webhooks)
+- [Interface: forge:ui](#interface-forgeui)
+- [Scripts and tests](#scripts-and-tests)
+- [Coding agents: docs, themes and MCP](#coding-agents-docs-themes-and-mcp)
 - [Build targets](#build-targets)
 - [Virtual modules](#virtual-modules)
 - [Assets and CSS](#assets-and-css)
@@ -33,7 +37,7 @@ my-app/
   dist/                static and single-html output (generated)
 ```
 
-Run `forge new my-app --template <react|jsx|vanilla|three|ai>` to start from a working example.
+Run `forge new my-app --template <starter|react|jsx|vanilla|three|pixel|ai|arena>` to start from a working example. `starter` is an application shell built on `forge:ui`. Every new project also gets an `AGENTS.md` (the [agent guide](AGENT_GUIDE.md)) and a `.mcp.json` that registers `forge mcp`, so a coding agent that opens the project knows the framework.
 
 ## Routing
 
@@ -263,6 +267,131 @@ for await (const ev of runAgent({
 
 Events are normalized: tool-call arguments arrive fully assembled (streamed partial JSON is joined for you), `usage` reports input/output tokens, `done` reports why the model stopped. Pass `signal: ctx.signal` in server routes so a closed tab cancels generation. Server-side keys come from `ctx.env` (listed in `server.env`), and the provider's host must be in `server.allowFetch`.
 
+## Automation: n8n and webhooks
+
+`forge:n8n` connects an app to [n8n](https://n8n.io) in both directions. It is plain HTTP, so it also fits Zapier, Make and any other webhook tool.
+
+**App → workflow.** Call a workflow's Webhook node and use what it answers:
+
+```ts
+// app/api/signup/route.ts
+import { trigger, WorkflowError } from "forge:n8n";
+
+export async function POST(request: Request, { env, signal }: ForgeContext) {
+  const form = await request.json();
+  try {
+    const result = await trigger<{ ticket: string }>(env.N8N_SIGNUP_URL, form, { secret: env.N8N_SECRET, signal });
+    return { ok: true, ticket: result.ticket };
+  } catch (error) {
+    if (error instanceof WorkflowError) return Response.json({ ok: false, error: error.message }, { status: 502 });
+    throw error;
+  }
+}
+```
+
+`trigger(url, data, options)` sends JSON with `POST` (or query parameters with `method: "GET"`) and resolves with the workflow's response, parsed. Options: `secret` with `secretHeader` (default `x-n8n-secret`, for the node's Header Auth), `basicAuth: { user, password }`, `headers`, `query`, `signal`, `timeoutMs` (default 30 s). A failure throws `WorkflowError` with `status` and `body`; a 404 says to check that the workflow is active and the Production URL is used, and a missing URL (an unset variable) says which setting to fix.
+
+**Workflow → app.** Wrap an API route so n8n's HTTP Request node can call it:
+
+```ts
+// app/api/hooks/order/route.ts
+import { webhook } from "forge:n8n";
+import { publish } from "forge:realtime";
+
+export const POST = webhook(
+  async ({ body }) => {
+    publish("orders", { type: "order", id: body.id });   // push it to every open browser
+    return { received: body.id };
+  },
+  { secret: (ctx) => ctx.env.N8N_SECRET },
+);
+```
+
+`webhook(handler, { secret, secretHeader })` checks the shared secret (in the header, or as `Authorization: Bearer …`) in constant time, parses JSON or form bodies, and answers JSON: what the handler returns, or `{ ok: true }`. The handler receives `{ body, query, headers, request, ctx }`. Throw `new WorkflowError("message", 422)` to answer with that status.
+
+Settings both directions need, in `forge.config.json`:
+
+```json
+{ "server": { "env": ["N8N_SIGNUP_URL", "N8N_SECRET"], "allowFetch": ["n8n.example.com"] } }
+```
+
+**n8n as an agent host.** n8n's MCP Client node (and its AI Agent node) can use this framework's tools: run `forge mcp --http 3333` next to n8n and point the node at `http://127.0.0.1:3333/mcp` ([below](#coding-agents-docs-themes-and-mcp)).
+
+## Interface: forge:ui
+
+`forge:ui` is a component library inside the binary: 59 typed React components, a theme engine with named looks (including liquid glass), and game HUD parts. Import and use; there is nothing to install or configure.
+
+```tsx
+import { Button, Theme, toast } from "forge:ui";
+
+<Theme preset="liquid-glass" accent="#ff5a36">
+  <Button onClick={() => toast("Saved")}>Save</Button>
+</Theme>
+```
+
+Components, looks and tokens are in [FORGE_UI.md](FORGE_UI.md); the rules for a professional result are in [DESIGN.md](DESIGN.md). The stylesheet is added only to apps that import the module.
+
+## Scripts and tests
+
+```bash
+forge run scripts/seed.ts     # run one file in the embedded engine
+forge test                    # every *.test.* and *.spec.* file
+forge test loader             # only files whose path contains "loader"
+forge test apps/shop cart     # another project directory, filtered
+```
+
+Both bundle with the app's settings and run in the same engine and sandbox as loaders and API routes, so `forge:*` modules, `fetch` (to `server.allowFetch` hosts) and TypeScript work, and a test exercises exactly what production runs. `forge run` calls a default-exported function, if there is one, and prints what it returns.
+
+```ts
+// app/_lib/price.test.ts
+import { describe, expect, test } from "forge:test";
+import { GET } from "../api/projects/route";
+import { total } from "./price";
+
+describe("total", () => {
+  test("adds tax", () => {
+    expect(total(100, 0.2)).toBe(120);
+  });
+});
+
+// Loaders and API handlers are plain functions: import them and call them.
+test("the projects API answers with a list", () => {
+  expect(GET().projects).toHaveLength(4);
+});
+```
+
+`forge:test` has `test` (alias `it`), `test.skip`, `describe`, `beforeEach`, `afterEach` and `expect` with `toBe`, `toEqual`, `toBeTruthy`, `toBeFalsy`, `toBeNull`, `toBeUndefined`, `toBeDefined`, the four number comparisons, `toBeCloseTo`, `toContain`, `toHaveLength`, `toHaveProperty`, `toMatch`, `toBeInstanceOf`, `toThrow`, `.not`, and `await expect(promise).rejects()`. `afterEach` hooks run even when the test fails, and hooks registered inside a `describe` apply to that group only. `toEqual` compares dates, maps, sets, regular expressions and typed arrays by content. Component rendering in a browser is not part of it; use Playwright for that.
+
+## Coding agents: docs, themes and MCP
+
+The binary carries its own documentation, so an agent can look things up without network access:
+
+```bash
+forge docs                       # list the documents
+forge docs socket rooms          # search all of them; prints the best sections
+forge docs --read agents         # the one-page agent guide
+forge themes dense admin panel   # find a forge:ui look from a description
+```
+
+`forge mcp` serves the same over the [Model Context Protocol](https://modelcontextprotocol.io), with tools that act on projects:
+
+| Tool | Does |
+|---|---|
+| `forge_docs_search`, `forge_docs_read` | Search the documents; read an outline or one section |
+| `forge_ui_component` | Props and types of one `forge:ui` component, with the types it refers to |
+| `forge_ui_themes` | Looks that match a description, with their settings |
+| `forge_templates`, `forge_new` | List templates; create a project |
+| `forge_routes`, `forge_check` | The route table; route validation, the security scan, and type files |
+| `forge_test`, `forge_build`, `forge_pack` | Run tests; build a target; pack a page or component into one file |
+
+It also offers the documents as resources (`forge://docs/<name>`, `forge://ui/types`) and two prompts, `forge_build_app` and `forge_build_game`. Errors come back as readable results that say what to do next.
+
+```json
+{ "mcpServers": { "forge": { "command": "forge", "args": ["mcp"] } } }
+```
+
+Clients that connect over the network use Streamable HTTP: `forge mcp --http 3333` answers `POST /mcp` on `127.0.0.1` (stateless, JSON responses). A web page must not be able to drive these tools, so the endpoint refuses what a browser could send on a page's behalf: an `Origin` that is not exactly a loopback origin, a `Host` that is not loopback while the server listens on loopback (DNS rebinding), and any body not sent as `application/json`. Put it behind your own authentication before exposing it with `--host`.
+
 ## Build targets
 
 ```bash
@@ -366,8 +495,11 @@ Not handled yet: workers created from separate files, `text/babel` with `data-ty
 | `forge:realtime` | browser: `connect(path, handlers)`, `useSocket(path, onMessage)`; server: `publish(topic, msg)`, `subscribers(topic)` |
 | `forge:file` | `openFile`, `openFiles`, `saveFile`, `onDrop`, `useDrop`; self-saving single files: `useDocument`, `saveSelf`, `embeddedState`, `selfHtml`, `fileName` ([above](#self-saving-single-files)) |
 | `forge:game` | `loop({ update, render, step })` fixed-timestep loop, `input()` keyboard/pointer state, `fit(canvas, onResize)` DPR-aware sizing |
+| `forge:ui` | components, `Theme`, looks, hooks ([above](#interface-forgeui), [FORGE_UI.md](FORGE_UI.md)) |
+| `forge:n8n` | `trigger(url, data, options)`, `webhook(handler, options)`, `WorkflowError` ([above](#automation-n8n-and-webhooks)) |
+| `forge:test` | `test`, `describe`, `expect`, `beforeEach`, `afterEach` for `forge test` ([above](#scripts-and-tests)) |
 
-Types are written to `.forge/types/forge.d.ts` on every build; include `.forge/types` in `tsconfig.json`.
+Types are written to `.forge/types/` (`forge.d.ts` and `forge-ui.d.ts`) on every build and on `forge check`; include `.forge/types` in `tsconfig.json`.
 
 ## Assets and CSS
 
@@ -442,7 +574,9 @@ Known limits: workers share one process (no process-per-worker isolation yet), t
 
 Server code runs in QuickJS (ES2023, modules, async). Available globals: `fetch`, `Request`, `Response`, `Headers`, `URL`, `URLSearchParams`, `ReadableStream`, `TransformStream`, `TextEncoder`/`TextDecoder` (+ streams), `AbortController`/`AbortSignal`, `setTimeout`/`setInterval`, `queueMicrotask`, `MessageChannel`, `crypto.getRandomValues`/`randomUUID`, `performance.now`, `atob`/`btoa`, `console`.
 
-Not available: Node.js built-ins (`fs`, `net`, ...), `Intl` beyond what QuickJS provides, `process`, `Buffer`. Packages that need Node fail at build time with a clear error.
+`Intl` is provided for `en-US`: `NumberFormat` (decimal, percent, currency, unit, compact), `DateTimeFormat` (in UTC), `PluralRules`, `RelativeTimeFormat`, `ListFormat`, and the `toLocaleString` family. Output matches browsers, so formatted numbers and dates hydrate without mismatches. Format dates with `timeZone: "UTC"`, because the server has no local time zone.
+
+Not available: Node.js built-ins (`fs`, `net`, ...), `Intl` locales other than `en-US`, `process`, `Buffer`. Packages that need Node fail at build time with a clear error.
 
 ## Deploying
 

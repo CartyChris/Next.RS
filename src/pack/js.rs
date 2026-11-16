@@ -359,6 +359,23 @@ impl PackPlugin {
         }
     }
 
+    fn forge_ui_dir(&self) -> PathBuf {
+        self.p.npm.workspace().join("forge-ui")
+    }
+
+    /// Forge UI's sources (embedded in the binary), written to the workspace; returns the
+    /// entry that also pulls in the stylesheet.
+    fn forge_ui(&self) -> Result<PathBuf> {
+        let dir = self.forge_ui_dir();
+        std::fs::create_dir_all(&dir)?;
+        for (name, source) in crate::build::generated::UI_FILES {
+            crate::build::generated::write_if_changed(&dir.join(name), source)?;
+        }
+        let entry = dir.join("entry.js");
+        crate::build::generated::write_if_changed(&entry, "import \"./styles.css\";\nexport * from \"./index.ts\";\n")?;
+        Ok(entry)
+    }
+
     fn in_workspace(&self, id: &str) -> bool {
         Path::new(id).starts_with(self.p.npm.workspace())
     }
@@ -425,6 +442,12 @@ impl Plugin for PackPlugin {
         if self.virtuals.contains_key(spec) {
             return Ok(Some(HookResolveIdOutput::from_id(spec)));
         }
+        if spec == "forge:ui" {
+            return Ok(Some(HookResolveIdOutput::from_id(self.forge_ui()?.to_string_lossy().into_owned())));
+        }
+        if spec.starts_with("forge:") {
+            bail!("`{spec}` needs a Forge project (forge new); `forge pack` supports `forge:ui` only");
+        }
         let importer_url = self.importer_url(args.importer);
         let mapped = self.map.as_ref().and_then(|m| m.resolve(spec, &importer_url));
         let spec = mapped.as_deref().unwrap_or(spec);
@@ -445,7 +468,12 @@ impl Plugin for PackPlugin {
                 bail!("`{spec}` is a Node.js built-in and does not exist in the browser");
             }
             let local = args.importer.is_some_and(|i| !i.starts_with("http") && !self.virtuals.contains_key(i));
-            if local && self.in_workspace(args.importer.unwrap_or_default()) {
+            // Installed packages resolve their own dependencies; Forge UI's (React) are installed on demand.
+            let importer = Path::new(args.importer.unwrap_or_default());
+            if local
+                && self.in_workspace(args.importer.unwrap_or_default())
+                && !importer.starts_with(self.forge_ui_dir())
+            {
                 return Ok(None);
             }
             // The page's own node_modules first (component projects), then the workspace.

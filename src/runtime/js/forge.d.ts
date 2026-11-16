@@ -192,6 +192,89 @@ declare module "forge:file" {
   ): [T, (next: T | ((prev: T) => T)) => void, { save(): Promise<boolean>; dirty: boolean }];
 }
 
+declare module "forge:test" {
+  /** Register a test for `forge test`. It fails by throwing; it may be async. */
+  export function test(name: string, fn: () => void | Promise<void>): void;
+  export namespace test {
+    function skip(name: string, fn?: () => void | Promise<void>): void;
+  }
+  export const it: typeof test;
+  export function describe(name: string, body: () => void): void;
+  export function beforeEach(fn: () => void | Promise<void>): void;
+  export function afterEach(fn: () => void | Promise<void>): void;
+  interface Matchers {
+    toBe(expected: unknown): void;
+    toEqual(expected: unknown): void;
+    toBeTruthy(): void;
+    toBeFalsy(): void;
+    toBeNull(): void;
+    toBeUndefined(): void;
+    toBeDefined(): void;
+    toBeGreaterThan(n: number): void;
+    toBeGreaterThanOrEqual(n: number): void;
+    toBeLessThan(n: number): void;
+    toBeLessThanOrEqual(n: number): void;
+    toBeCloseTo(n: number, digits?: number): void;
+    toContain(item: unknown): void;
+    toHaveLength(n: number): void;
+    toMatch(pattern: RegExp | string): void;
+    toHaveProperty(key: string, value?: unknown): void;
+    toBeInstanceOf(type: Function): void;
+    /** For `expect(() => …)`. */
+    toThrow(message?: string | RegExp): void;
+    /** For `await expect(promise).rejects(…)`. */
+    rejects(message?: string): Promise<void>;
+  }
+  export function expect(actual: unknown): Matchers & { not: Matchers };
+}
+
+declare module "forge:n8n" {
+  /** A failed workflow call. `status` is the HTTP status; `body` is what the workflow sent. */
+  export class WorkflowError extends Error {
+    constructor(message: string, status?: number, body?: unknown);
+    status?: number;
+    body?: unknown;
+  }
+  export interface TriggerOptions {
+    method?: "POST" | "GET" | "PUT" | "PATCH" | "DELETE";
+    headers?: Record<string, string>;
+    /** Sent in `secretHeader` (n8n "Header Auth"). */
+    secret?: string;
+    secretHeader?: string;
+    /** n8n "Basic Auth". */
+    basicAuth?: { user: string; password: string };
+    query?: Record<string, string | number | boolean>;
+    signal?: AbortSignal;
+    /** Default 30000. */
+    timeoutMs?: number;
+  }
+  /**
+   * Call an n8n workflow through its Webhook node; resolves with the workflow's response.
+   * `url` may come straight from `ctx.env`: a missing value throws a `WorkflowError` that
+   * names the fix.
+   */
+  export function trigger<T = unknown>(url: string | URL | undefined, data?: unknown, options?: TriggerOptions): Promise<T>;
+  export interface WebhookEvent<B = any> {
+    /** Parsed JSON or form body (`null` for GET). */
+    body: B;
+    query: Record<string, string>;
+    headers: Headers;
+    request: Request;
+    ctx: ForgeContext;
+  }
+  export interface WebhookOptions {
+    /** Shared secret, or a function reading it from `ctx.env`. Omit for a public webhook. */
+    secret?: string | ((ctx: ForgeContext) => string | undefined);
+    /** Header that carries the secret (default `x-n8n-secret`; `Authorization: Bearer` also works). */
+    secretHeader?: string;
+  }
+  /** An API route handler for calls from n8n's HTTP Request node or any webhook sender. */
+  export function webhook<B = any>(
+    handler: (event: WebhookEvent<B>) => unknown | Promise<unknown>,
+    options?: WebhookOptions,
+  ): (request: Request, ctx: ForgeContext) => Promise<Response>;
+}
+
 interface ImportMetaEnv {
   readonly MODE: string;
   readonly DEV: boolean;

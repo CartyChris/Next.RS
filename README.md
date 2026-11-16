@@ -78,7 +78,7 @@ cargo install --git https://github.com/CartyChris/Next.RS
 ```
 
 ```bash
-forge new my-app --template react   # or: jsx, vanilla, three, ai, pixel, arena
+forge new my-app --template starter   # or: react, jsx, vanilla, three, ai, pixel, arena
 ```
 
 ```bash
@@ -87,9 +87,43 @@ cd my-app && npm install && forge dev
 
 `forge dev` rebuilds on save (the React example: ~0.2 s including restarting the JS workers) and reloads the browser. Build and security errors appear as an in-browser overlay.
 
-## Forge UI
+## An interface kit in the binary
 
-[Forge UI](packages/forge-ui) supplies typed React building blocks, accessible interactions, and light, dark, and system themes. Follow the [component guide](docs/FORGE_UI.md) or run [Relay](examples/ui-showcase) to see the same interface on the SSR, static, and single-file targets.
+`import { … } from "forge:ui"` gives an app 59 typed, accessible React components with nothing to install: layout, forms, dialogs, menus, a sortable table, toasts, a command palette, an app shell, and HUD parts for games. `forge new my-app --template starter` begins here:
+
+![The starter template: a sidebar, three summary cards, a filter field and a sortable table of projects with status badges](docs/images/starter.jpg)
+
+One `Theme` sets the look for the whole app. Eight named looks ship with it, and each is a starting point: every prop next to `preset` overrides it.
+
+```tsx
+<Theme preset="liquid-glass">                                  // translucent, blurred panels
+<Theme preset="graphite" theme="dark">                         // dense and monochrome
+<Theme preset="forge" accent="#0a7f5a" radius="full">          // your brand color, pill corners
+```
+
+![The component gallery in the liquid glass look: translucent panels over a soft blue backdrop, with theme controls for look, accent, corners and density](docs/images/glass.jpg)
+
+- **One hue drives the palette.** Pass any CSS color as `accent`; lightness is fixed per role in OKLCH, so text keeps AA contrast for every color, in light and dark.
+- **Looks are labeled for people and agents.** `forge themes frosted apple glass` (or the MCP theme tool) answers with the preset and its settings.
+- **Custom parts follow along.** Everything is driven by `--forge-ui-*` CSS variables, so your own components pick up the accent, corners, density and glass.
+- **Checked the way it ships.** The showcase runs under axe on the server, static and single-file targets, at 320px and desktop widths.
+
+Components and looks: [docs/FORGE_UI.md](docs/FORGE_UI.md). Rules for a result that does not look generated: [docs/DESIGN.md](docs/DESIGN.md). Every component, live: [Relay](examples/ui-showcase) at `/components`.
+
+## Built for coding agents
+
+An agent should be able to build with a framework it has never seen. Next.RS carries what it needs:
+
+- **`forge docs <words>`** searches the documentation inside the binary; no network, no stale training data.
+- **`forge mcp`** is a Model Context Protocol server (stdio, or `--http` for network clients such as n8n): search docs, look up a component's props, find a look, then create, check, test, build and pack projects.
+- **`forge new`** writes an `AGENTS.md` with the conventions and pitfalls into every project, and a `.mcp.json` that registers the server.
+- **`forge check`** validates routes, runs the security scan on server and client code, and writes type declarations, so one command plus `tsc` says whether a change is sound.
+- **`forge test`** and **`forge run`** execute tests and scripts in the same engine and sandbox as production server code.
+- **Errors say what to do next**, with `file:line:col`.
+
+```json
+{ "mcpServers": { "forge": { "command": "forge", "args": ["mcp"] } } }
+```
 
 ## What you get
 
@@ -120,6 +154,9 @@ cd my-app && npm install && forge dev
 - `forge:realtime`: sockets and pub/sub (above)
 - `forge:game`: fixed-timestep loop, keyboard/pointer input, DPR-aware canvas sizing
 - `forge:file`: open/save/drop files; self-saving single files (`useDocument`, `saveSelf`)
+- `forge:ui`: components, themes and looks (above)
+- `forge:n8n`: call n8n workflows with `trigger()`, receive their calls with `webhook()`; works with any webhook tool
+- `forge:test`: `test`, `describe`, `expect` for `forge test`
 
 **Assets and workers**: CSS imports; images, audio, fonts, 3D models, `.wasm`, `.onnx` as hashed URLs (data URLs in single-file builds); shaders and prompts (`.glsl .frag .vert .wgsl .md .prompt`) as strings; `new Worker(new URL("./x.worker.ts", import.meta.url))` bundles a worker, which also works offline from a single HTML file.
 
@@ -136,6 +173,7 @@ cd my-app && npm install && forge dev
 
 | Template | Shows |
 |---|---|
+| [`starter`](examples/starter) | application shell on `forge:ui`: sidebar, theme switch, table from a loader, settings form, command palette, API route, a test |
 | [`react`](examples/react) | TSX, layouts, loaders + `staticParams`, Suspense streaming, API route, 404 |
 | [`jsx`](examples/jsx) | plain JSX clicker with persistent state, built as one HTML file |
 | [`vanilla`](examples/vanilla) | no framework, zero dependencies: `render()` + `mount()`, loaders, API |
@@ -143,6 +181,8 @@ cd my-app && npm install && forge dev
 | [`pixel`](examples/pixel) | **Pixel Pad**: pixel-art editor in one 90 kB file that saves itself, imports dropped images, exports PNG |
 | [`ai`](examples/ai-chat) | streaming chat UI; proxies any OpenAI-compatible API (OpenAI, Ollama, LM Studio, vLLM, …) or echoes offline |
 | [`arena`](examples/arena) | **Forge Arena**: multiplayer socket rooms, neural bots trained in a worker, SSR lobby, 257 kB offline build |
+
+[Relay](examples/ui-showcase) is the `forge:ui` showcase: a dashboard plus a gallery of every component with live theme controls.
 
 ## Performance
 
@@ -168,6 +208,8 @@ QuickJS is an interpreter, so JS-heavy React SSR is several times slower than a 
 ## Documentation
 
 - [Guide](docs/GUIDE.md): routing, pages, layouts, loaders, APIs, targets, modules, configuration, security, deployment
+- [Agent guide](docs/AGENT_GUIDE.md): the one-page version for coding agents; also `forge docs --read agents`
+- [Forge UI](docs/FORGE_UI.md) and [design rules](docs/DESIGN.md): components, looks, tokens, and what good looks like
 - [Architecture](docs/ARCHITECTURE.md): how the build, runtime and server fit together, and why
 - [Status](docs/STATUS.md): what is implemented, mapped against the original milestone plan
 - [Roadmap](docs/ROADMAP.md): what is next, as tickets
@@ -180,7 +222,7 @@ cargo test                                      # unit + integration tests (no n
 ```
 
 ```bash
-for e in react jsx three-game ai-chat; do (cd examples/$e && npm install); done
+for e in react jsx three-game ai-chat arena pixel starter ui-showcase; do (cd examples/$e && npm ci); done
 cargo test --features e2e                       # React / JSX / three.js / AI examples
 ```
 
@@ -188,9 +230,13 @@ cargo test --features e2e                       # React / JSX / three.js / AI ex
 cargo build --release && (cd tests/browser && npm install && npx playwright install chromium && node smoke.mjs ../../target/release/forge)
 ```
 
+```bash
+node tests/browser/forge-ui.mjs target/release/forge   # forge:ui showcase on all three targets, with axe
+```
+
 ```text
 src/
-  main.rs            CLI: new, dev, build, start, check
+  main.rs            CLI: new, dev, build, start, check, run, test, docs, themes, mcp, pack
   config.rs          forge.config.json, targets, .env
   routes.rs          app/ scanner and matcher
   build/             analyze (Oxc), generated (codegen), bundle (Rolldown), html, manifest
@@ -198,7 +244,10 @@ src/
   server/            Axum handler, static files, dev server
   render.rs          request protocol and page documents
   scaffold.rs        templates (embedded from examples/)
-examples/            five apps, also the `forge new` templates and test fixtures
+  mcp.rs             MCP server, built-in docs search, component and theme lookup
+  pack/              forge pack: pages and component files into one offline file
+packages/forge-ui/   source of the built-in forge:ui module
+examples/            nine apps: the `forge new` templates, the showcase, and test fixtures
 tests/               Rust integration tests and the browser smoke test
 ```
 

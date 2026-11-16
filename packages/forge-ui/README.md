@@ -1,84 +1,39 @@
 # Forge UI
 
-Accessible React components and CSS tokens for [Next.RS](../../README.md). The package uses your app’s existing React 19 installation and Forge’s built-in TypeScript, JSX, and CSS bundling. The stylesheet and components require zero additional runtime dependencies.
+Accessible React components and design tokens for [Next.RS](../../README.md). This folder is the source of the built-in `forge:ui` module: the `forge` binary embeds these files, so a Forge app imports the components with nothing to install.
 
-Explore the [Relay showcase](../../examples/ui-showcase) or use the [agent guide](../../docs/FORGE_UI.md) to start an app.
+```tsx
+import { Button, Theme } from "forge:ui";
+```
 
-## Install from a Next.RS checkout
+- [Component reference and patterns](../../docs/FORGE_UI.md)
+- [Design rules](../../docs/DESIGN.md)
+- Examples: [starter](../../examples/starter) and [Relay](../../examples/ui-showcase) (every component at `/components`)
 
-From a Forge app inside the repository’s `examples/` directory, run:
+## Layout of this package
+
+| Path | Contents |
+|---|---|
+| `src/` | The components (TypeScript, React 19, no other dependencies). `index.ts` lists the public exports. |
+| `styles.css` | Tokens and component styles, class prefix `forge-ui-`. |
+| `forge-ui.d.ts` | Generated ambient types for `forge:ui`. Regenerate after changing `src/`. |
+| `scripts/build-types.mjs` | Generates `forge-ui.d.ts` (`--check` verifies it is current). |
+
+After changing a component:
 
 ```sh
-npm install --install-links ../../packages/forge-ui
+(cd examples/ui-showcase && npm ci)
+node packages/forge-ui/scripts/build-types.mjs
+cargo build
+node tests/browser/forge-ui.mjs
 ```
 
-Add `install-links=true` to the app’s `.npmrc` so `npm ci` uses the same local package installation mode. For an app outside the checkout, adjust the path or make a tarball with `npm pack ./packages/forge-ui` from the checkout root and install the resulting tarball. When you change the local package, reinstall it in the consuming app.
+New source files must also be listed in `UI_FILES` in `src/build/generated.rs`; a test fails if one is missing.
 
-Import the stylesheet once from the root layout and wrap your app:
+## Using it as a package
 
-```tsx
-import type { ReactNode } from "react";
-import { Theme } from "@nextrs/ui";
-import "@nextrs/ui/styles.css";
-import "./app.css";
+The same sources work as the `@nextrs/ui` package in a React 19 app bundled by Forge. Install it from a checkout (`npm install --install-links ./packages/forge-ui`), import `@nextrs/ui/styles.css` once, and call `configure({ Link, href, usePathname, navigate })` to connect links to your router. Inside Forge, prefer `forge:ui`, which does all of that for you.
 
-export default function Layout({ children }: { children: ReactNode }) {
-  return <Theme>{children}</Theme>;
-}
-```
+## Browser support
 
-An app can set `body { margin: 0; }` in `app.css`. The component stylesheet uses the `forge-ui-` class prefix and places document colors and typography on `Theme`. It applies no reset to the rest of the document.
-
-## Components
-
-| Import | Compose with |
-| --- | --- |
-| `Theme`, `Container`, `Stack`, `Grid` | `theme="system"` follows the device. `Container` sets page width. `Stack` gives vertical rhythm. `Grid` reflows from one column to the configured maximum. |
-| `Button`, `ButtonLink` | Actions and links, respectively. Use `variant` and `size` to set hierarchy. Use `type="submit"` for a form submit. |
-| `TextInput`, `Select`, `Textarea`, `Checkbox` | Pass `label` and normal HTML control props. Optional `description` and `error` associate with the field automatically. `Select` accepts native `option` and `optgroup` children. |
-| `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` | Compose a content surface using the parts you need. Set `CardTitle as` to fit the page’s heading order. |
-| `Nav`, `NavLink` | Set a descriptive `label` on each navigation landmark and use `current="page"` or `current="location"` for active links. |
-| `Badge`, `Alert` | Label statuses with text. `Alert` can announce updates with `live="polite"` or use `live="assertive"` for urgent messages. |
-| `Dialog` | Set `open`, `onOpenChange`, and `title`. Supply a short optional `description`, body content, and optional `footer` actions. |
-| `Tabs` | Pass a `label` and items with unique `value`, `label`, and `content`. Use `defaultValue` or control the pair `value` and `onValueChange`. |
-| `NotificationRegion` | Mount once per workspace, then pass an array of notifications with unique string IDs. Give it `onDismiss` for user dismissal. |
-
-Named TypeScript exports include `ButtonProps`, `TextInputProps`, `DialogProps`, `TabItem`, `TabsProps`, `Notification`, and `ThemeMode`. Native element props and React 19 refs pass through on the primitives and fields. App code owns state, form submission, and notification lifetimes.
-
-## Customize tokens
-
-Override variables in your app stylesheet with a custom class on `Theme`. Pair foreground and background tokens to retain contrast in each palette.
-
-```tsx
-<Theme className="library-theme" theme={mode}>{children}</Theme>
-```
-
-```css
-.forge-ui.library-theme {
-  --forge-ui-accent: #145c4d;
-  --forge-ui-accent-hover: #0f493d;
-  --forge-ui-on-accent: #fff;
-  --forge-ui-focus: #187460;
-  --forge-ui-radius: 0.5rem;
-}
-.forge-ui.library-theme[data-theme="dark"] {
-  --forge-ui-accent: #8ae1c9;
-  --forge-ui-accent-hover: #acf0dc;
-  --forge-ui-on-accent: #103c32;
-  --forge-ui-focus: #9ce9d3;
-}
-@media (prefers-color-scheme: dark) {
-  .forge-ui.library-theme[data-theme="system"] {
-    --forge-ui-accent: #8ae1c9;
-    --forge-ui-accent-hover: #acf0dc;
-    --forge-ui-on-accent: #103c32;
-    --forge-ui-focus: #9ce9d3;
-  }
-}
-```
-
-See [styles.css](styles.css) for the full palette, spacing, type scale, surface, radius, focus, and shadow tokens. Prefer the component’s props for variants and `className` for layout or local branding.
-
-## Rendering and browser support
-
-Forge renders standard markup through QuickJS for server and static builds. The single-file build bundles React, the styles, and the client interactions into its offline HTML. A modal opens after React mounts using the native `HTMLDialogElement.showModal()` API. Target modern Chromium, Firefox, and Safari with native modal dialog support. Your Forge output may have additional browser requirements. Mobile form controls keep native select and checkbox behavior.
+Current Chromium, Firefox and Safari. The palette uses `oklch()` and relative color syntax; overlays use the native `<dialog>` and popover APIs. Everything renders on the server and works in single-file builds.

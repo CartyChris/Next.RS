@@ -11,6 +11,7 @@ pub mod bundle;
 pub mod generated;
 pub mod html;
 pub mod manifest;
+pub mod script;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -234,8 +235,18 @@ fn spec(project: &Project, input: (&str, &Path), side: Side) -> BundleSpec {
 }
 
 /// Routes, analysis and the security scan, without writing build output.
+/// `.forge/types/`: declarations for the `forge:*` modules, for editors and `tsc`.
+pub fn write_types(project: &Project) -> Result<()> {
+    let dir = project.out_dir().join("types");
+    std::fs::create_dir_all(&dir)?;
+    generated::write_if_changed(&dir.join("forge.d.ts"), TYPES_DTS)?;
+    generated::write_if_changed(&dir.join("forge-ui.d.ts"), generated::UI_DTS)?;
+    Ok(())
+}
+
 pub async fn check(project: &Project) -> Result<(Plan, Vec<String>)> {
     let plan = plan(project)?;
+    write_types(project)?;
     let generated = generated::emit(&EmitInput {
         root: &project.root,
         dir: &project.generated_dir(),
@@ -246,7 +257,15 @@ pub async fn check(project: &Project) -> Result<(Plan, Vec<String>)> {
         static_data: None,
     })?;
     let server = bundle::bundle(spec(project, ("server", &generated.server_entry), Side::Server)).await?;
-    Ok((plan, server.warnings))
+    // Client-only pages are not part of the server bundle: bundle (and scan) the client too.
+    let client = bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?;
+    let mut warnings = server.warnings;
+    for w in client.warnings {
+        if !warnings.contains(&w) {
+            warnings.push(w);
+        }
+    }
+    Ok((plan, warnings))
 }
 
 pub async fn build(project: &Project) -> Result<BuildResult> {
@@ -257,8 +276,7 @@ pub async fn build(project: &Project) -> Result<BuildResult> {
     let plan = plan(project)?;
     let out_dir = project.out_dir();
     let gen_dir = project.generated_dir();
-    std::fs::create_dir_all(out_dir.join("types"))?;
-    generated::write_if_changed(&out_dir.join("types/forge.d.ts"), TYPES_DTS)?;
+    write_types(project)?;
 
     let emit = |static_data: Option<&str>| {
         generated::emit(&EmitInput {
