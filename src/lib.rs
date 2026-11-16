@@ -6,6 +6,7 @@
 
 pub mod build;
 pub mod config;
+pub mod mcp;
 #[cfg(feature = "pack")]
 pub mod pack;
 pub mod render;

@@ -4,8 +4,8 @@ import {
   Accordion, Alert, Avatar, Badge, Bar, Breadcrumbs, Button, ButtonGroup, Card, CardContent, CardHeader,
   CardTitle, Code, Container, Drawer, EmptyState, Grid, Heading, Hud, HudSlot, Icon, IconButton, Image, Kbd,
   Menu, PageHeader, Pagination, Popover, Progress, RadioGroup, Row, SegmentedControl, Select, Skeleton, Slider,
-  Spinner, Stack, Stat, Switch, Table, Text, TextInput, Theme, Toaster, Tooltip, toast, useDisclosure,
-  type AccentPreset, type Column, type Density, type Radius,
+  Spinner, Stack, Stat, Switch, Table, Text, TextInput, Theme, Toaster, Tooltip, getTheme, themes, toast,
+  useDisclosure, type AccentPreset, type Column, type Density, type Radius,
 } from "forge:ui";
 import { useState } from "react";
 import anvil from "../_assets/anvil.svg";
@@ -51,10 +51,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function Gallery() {
-  const [accent, setAccent] = useState<AccentPreset>("ember");
+  // A look is a named preset; the controls below override single settings of it.
+  const [look, setLook] = useState("forge");
+  const [accent, setAccent] = useState<AccentPreset | "">("");
   const [custom, setCustom] = useState("");
-  const [radius, setRadius] = useState<Radius>("md");
-  const [density, setDensity] = useState<Density>("comfortable");
+  const [radiusChoice, setRadius] = useState<Radius | "">("");
+  const [densityChoice, setDensity] = useState<Density | "">("");
+  const base = getTheme(look)?.settings ?? {};
+  const radius = radiusChoice || base.radius || "md";
+  const density = densityChoice || base.density || "comfortable";
   const [saving, setSaving] = useState(false);
   const [live, setLive] = useState(true);
   const [page, setPage] = useState(1);
@@ -63,7 +68,8 @@ export default function Gallery() {
 
   return (
     <main className="relay-main" id="main">
-      <Theme theme="inherit" accent={custom || accent} radius={radius} density={density} id="playground">
+      <Theme preset={look} theme={base.theme ?? "inherit"} accent={custom || accent || undefined} radius={radiusChoice || undefined}
+        density={densityChoice || undefined} id="playground" className="relay-playground">
         <Container size="wide">
           <Stack gap="lg">
             <PageHeader
@@ -74,11 +80,21 @@ export default function Gallery() {
             />
 
             <Section title="Theme">
+              <Select label="Look" description={getTheme(look)?.description} value={look} onChange={(event) => {
+                setLook(event.currentTarget.value);
+                setAccent("");
+                setCustom("");
+                setRadius("");
+                setDensity("");
+              }}>
+                {themes.map((theme) => <option key={theme.name} value={theme.name}>{theme.label}</option>)}
+              </Select>
               <Grid columns={2}>
                 <Select label="Accent" value={accent} onChange={(event) => {
                   setCustom("");
-                  setAccent(event.currentTarget.value as AccentPreset);
+                  setAccent(event.currentTarget.value as AccentPreset | "");
                 }}>
+                  <option value="">From the look</option>
                   {accents.map((name) => <option key={name} value={name}>{name}</option>)}
                 </Select>
                 <TextInput label="Custom accent" description="Any CSS color. Its hue becomes an accessible palette."

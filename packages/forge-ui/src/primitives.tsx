@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ComponentPropsWithRef, ReactNode } from "react";
 import { cx, getAdapter, isExternal, pathOf } from "./config";
 import { Icon } from "./icon";
+import { getTheme } from "./themes";
+import type { Surface } from "./themes";
 
 export type ThemeMode = "system" | "light" | "dark" | "inherit";
 export type Spacing = "xs" | "sm" | "md" | "lg" | "xl";
@@ -24,6 +26,13 @@ export type ThemeTokens = Partial<Record<ThemeToken, string>>;
 const ACCENTS: readonly string[] = ["ember", "violet", "cobalt", "verdigris", "gold", "rose", "steel"];
 
 export interface ThemeProps extends ComponentPropsWithRef<"div"> {
+  /**
+   * A named look from the catalog (`themes`): `"forge"`, `"liquid-glass"`, `"graphite"`,
+   * `"paper"`, `"clinic"`, `"midnight"`, `"terminal"`, `"arcade"`. Other props override it.
+   */
+  preset?: string;
+  /** `glass` draws panels translucent, blurring what is behind them. */
+  surface?: Surface;
   /** Color scheme. `inherit` keeps the surrounding theme's scheme (for nested themes). */
   theme?: ThemeMode;
   /** A preset name, any CSS color (an accessible palette is derived from its hue), or a hue. */
@@ -34,9 +43,13 @@ export interface ThemeProps extends ComponentPropsWithRef<"div"> {
   tokens?: ThemeTokens;
 }
 
-export function Theme({
-  theme = "system", accent, radius, density, tokens, className = "", style, ...props
-}: ThemeProps) {
+export function Theme({ preset, className = "", style, ...rest }: ThemeProps) {
+  const base = preset ? getTheme(preset)?.settings : undefined;
+  const {
+    theme = base?.theme ?? "system", accent = base?.accent, radius = base?.radius, density = base?.density,
+    surface = base?.surface, tokens: ownTokens, ...props
+  } = rest;
+  const tokens = base?.tokens || ownTokens ? { ...base?.tokens, ...ownTokens } : undefined;
   const vars: Record<string, string | number> = {};
   let accentKind: string | undefined;
   if (typeof accent === "number") {
@@ -53,8 +66,9 @@ export function Theme({
   }
   const merged = Object.keys(vars).length ? { ...(vars as CSSProperties), ...style } : style;
   return (
-    <div {...props} className={`forge-ui ${className}`} style={merged} data-theme={theme}
-      data-accent={accentKind} data-radius={radius} data-density={density} />
+    <div {...props} className={`forge-ui ${className}`} style={merged} data-theme={theme} data-preset={preset}
+      data-accent={accentKind} data-radius={radius} data-density={density}
+      data-surface={surface === "glass" ? "glass" : undefined} />
   );
 }
 

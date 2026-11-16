@@ -479,6 +479,51 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
   --forge-ui-space-7: 3.5rem;
 }
 
+/* ---- surface="glass": translucent panels over a quiet tinted backdrop ---- */
+.forge-ui[data-surface="glass"] {
+  --forge-ui-glass-blur: 22px;
+  --forge-ui-surface: var(--forge-ui-light, rgb(255 255 255 / 56%)) var(--forge-ui-dark, rgb(46 46 52 / 52%));
+  --forge-ui-surface-raised: var(--forge-ui-light, rgb(255 255 255 / 78%)) var(--forge-ui-dark, rgb(44 44 50 / 78%));
+  --forge-ui-subtle: var(--forge-ui-light, rgb(20 20 30 / 6%)) var(--forge-ui-dark, rgb(255 255 255 / 8%));
+  --forge-ui-edge: var(--forge-ui-light, rgb(20 20 30 / 10%)) var(--forge-ui-dark, rgb(255 255 255 / 13%));
+  /* The lit rim of a pane of glass. */
+  --forge-ui-glass-rim: var(--forge-ui-light, inset 0 1px 0 rgb(255 255 255 / 75%), inset 0 0 0 1px rgb(255 255 255 / 35%)) var(--forge-ui-dark, inset 0 1px 0 rgb(255 255 255 / 16%), inset 0 0 0 1px rgb(255 255 255 / 5%));
+}
+/* The backdrop: three soft pools of the accent, fixed to the viewport so panels drift over them. */
+.forge-ui[data-surface="glass"] {
+  background-image:
+    radial-gradient(64rem 40rem at 6% -8%, color-mix(in oklab, var(--forge-ui-accent) 34%, transparent), transparent 66%),
+    radial-gradient(52rem 38rem at 102% 10%, color-mix(in oklab, var(--forge-ui-focus) 26%, transparent), transparent 64%),
+    radial-gradient(58rem 44rem at 46% 112%, color-mix(in oklab, var(--forge-ui-accent) 20%, transparent), transparent 68%);
+  background-attachment: fixed;
+}
+.forge-ui[data-surface="glass"] :is(.forge-ui-card:not([data-variant="ghost"]), .forge-ui-table-wrap, .forge-ui-accordion, .forge-ui-shell-sidebar, .forge-ui-shell-header, .forge-ui-notification, .forge-ui-hud-slot[data-panel]),
+.forge-ui[data-surface="glass"] :is(.forge-ui-dialog, .forge-ui-menu-list, .forge-ui-popover) {
+  backdrop-filter: blur(var(--forge-ui-glass-blur)) saturate(1.7);
+  -webkit-backdrop-filter: blur(var(--forge-ui-glass-blur)) saturate(1.7);
+}
+.forge-ui[data-surface="glass"] :is(.forge-ui-card:not([data-variant="ghost"]), .forge-ui-table-wrap, .forge-ui-accordion, .forge-ui-notification) {
+  box-shadow: var(--forge-ui-glass-rim), var(--forge-ui-shadow);
+}
+.forge-ui[data-surface="glass"] :is(.forge-ui-dialog, .forge-ui-menu-list, .forge-ui-popover) {
+  box-shadow: var(--forge-ui-glass-rim), var(--forge-ui-shadow-raised);
+}
+.forge-ui[data-surface="glass"] .forge-ui-table th { background: transparent; }
+.forge-ui[data-surface="glass"] .forge-ui-shell-header { background: var(--forge-ui-surface); }
+/* Without backdrop blur, fall back to nearly opaque panels so text stays readable. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .forge-ui[data-surface="glass"] {
+    --forge-ui-surface: var(--forge-ui-light, rgb(255 255 255 / 92%)) var(--forge-ui-dark, rgb(40 40 46 / 94%));
+    --forge-ui-surface-raised: var(--forge-ui-light, #fff) var(--forge-ui-dark, rgb(46 46 52));
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .forge-ui[data-surface="glass"] {
+    --forge-ui-surface: var(--forge-ui-light, #fff) var(--forge-ui-dark, rgb(40 40 46));
+    --forge-ui-surface-raised: var(--forge-ui-light, #fff) var(--forge-ui-dark, rgb(46 46 52));
+  }
+}
+
 .forge-ui-visually-hidden {
   position: absolute;
   width: 1px;

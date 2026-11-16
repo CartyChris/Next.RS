@@ -48,6 +48,7 @@ pub const UI_FILES: &[(&str, &str)] = &[
     ("index.ts", include_str!("../../packages/forge-ui/src/index.ts")),
     ("config.ts", include_str!("../../packages/forge-ui/src/config.ts")),
     ("hooks.ts", include_str!("../../packages/forge-ui/src/hooks.ts")),
+    ("themes.ts", include_str!("../../packages/forge-ui/src/themes.ts")),
     ("icon.tsx", include_str!("../../packages/forge-ui/src/icon.tsx")),
     ("primitives.tsx", include_str!("../../packages/forge-ui/src/primitives.tsx")),
     ("fields.tsx", include_str!("../../packages/forge-ui/src/fields.tsx")),

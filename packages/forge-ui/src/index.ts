@@ -1,6 +1,8 @@
 export { configure, cx } from "./config";
 export type { UiAdapter } from "./config";
 export { useDisclosure, useHotkey, useThemeMode } from "./hooks";
+export { themes, getTheme, findThemes } from "./themes";
+export type { ThemePreset, ThemeSettings, Surface } from "./themes";
 export { Icon, iconNames } from "./icon";
 export type { IconName, IconProps } from "./icon";
 export {

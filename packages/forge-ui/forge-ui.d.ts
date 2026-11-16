@@ -73,8 +73,38 @@ declare module "forge:ui/icon" {
     /** A small built-in outline icon set, so apps need no icon package. */
     export function Icon({ name, size, label, className, ...props }: IconProps): import("react").JSX.Element;
 }
+declare module "forge:ui/themes" {
+    import type { Accent, Density, Radius, ThemeMode, ThemeTokens } from "forge:ui/primitives";
+    /** How panels are drawn: opaque, or translucent glass that blurs what is behind it. */
+    export type Surface = "solid" | "glass";
+    export interface ThemeSettings {
+        theme?: ThemeMode;
+        accent?: Accent;
+        radius?: Radius;
+        density?: Density;
+        surface?: Surface;
+        tokens?: ThemeTokens;
+    }
+    export interface ThemePreset {
+        /** Pass to `<Theme preset="…">`. */
+        name: string;
+        label: string;
+        /** What it looks like and what it suits. */
+        description: string;
+        /** Words people use when asking for this look. */
+        keywords: string[];
+        /** The `Theme` props this preset stands for. Any prop you pass yourself wins. */
+        settings: ThemeSettings;
+    }
+    export const themes: readonly ThemePreset[];
+    /** The preset with this name, if there is one. */
+    export function getTheme(name: string): ThemePreset | undefined;
+    /** Presets that match words such as `"frosted apple"` or `"dense admin"`, best first. */
+    export function findThemes(query: string): ThemePreset[];
+}
 declare module "forge:ui/primitives" {
     import type { ComponentPropsWithRef, ReactNode } from "react";
+    import type { Surface } from "forge:ui/themes";
     export type ThemeMode = "system" | "light" | "dark" | "inherit";
     export type Spacing = "xs" | "sm" | "md" | "lg" | "xl";
     export type Tone = "neutral" | "info" | "success" | "warning" | "danger";
@@ -87,6 +117,13 @@ declare module "forge:ui/primitives" {
     export type ThemeToken = "font" | "font-mono" | "font-display" | "bg" | "surface" | "surface-raised" | "subtle" | "edge" | "control-edge" | "text" | "muted" | "focus" | "accent" | "accent-hover" | "on-accent" | "accent-soft" | "accent-text" | "radius" | "radius-panel" | "shadow" | "shadow-raised" | "control-size";
     export type ThemeTokens = Partial<Record<ThemeToken, string>>;
     export interface ThemeProps extends ComponentPropsWithRef<"div"> {
+        /**
+         * A named look from the catalog (`themes`): `"forge"`, `"liquid-glass"`, `"graphite"`,
+         * `"paper"`, `"clinic"`, `"midnight"`, `"terminal"`, `"arcade"`. Other props override it.
+         */
+        preset?: string;
+        /** `glass` draws panels translucent, blurring what is behind them. */
+        surface?: Surface;
         /** Color scheme. `inherit` keeps the surrounding theme's scheme (for nested themes). */
         theme?: ThemeMode;
         /** A preset name, any CSS color (an accessible palette is derived from its hue), or a hue. */
@@ -96,7 +133,7 @@ declare module "forge:ui/primitives" {
         /** Override individual tokens, e.g. `{ font: "Inter, sans-serif", surface: "#fff" }`. */
         tokens?: ThemeTokens;
     }
-    export function Theme({ theme, accent, radius, density, tokens, className, style, ...props }: ThemeProps): import("react").JSX.Element;
+    export function Theme({ preset, className, style, ...rest }: ThemeProps): import("react").JSX.Element;
     export interface ContainerProps extends ComponentPropsWithRef<"div"> {
         size?: "narrow" | "default" | "wide" | "full";
     }
@@ -679,6 +716,8 @@ declare module "forge:ui" {
     export { configure, cx } from "forge:ui/config";
     export type { UiAdapter } from "forge:ui/config";
     export { useDisclosure, useHotkey, useThemeMode } from "forge:ui/hooks";
+    export { themes, getTheme, findThemes } from "forge:ui/themes";
+    export type { ThemePreset, ThemeSettings, Surface } from "forge:ui/themes";
     export { Icon, iconNames } from "forge:ui/icon";
     export type { IconName, IconProps } from "forge:ui/icon";
     export { Theme, Container, Stack, Row, Grid, Divider, Heading, Text, Kbd, Code, Button, ButtonLink, IconButton, ButtonGroup, AppLink, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Badge, Alert, Nav, NavLink, Spinner, Skeleton, Avatar, Progress, Stat, EmptyState, Breadcrumbs, Pagination, Image, PageHeader, } from "forge:ui/primitives";

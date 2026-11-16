@@ -256,7 +256,15 @@ pub async fn check(project: &Project) -> Result<(Plan, Vec<String>)> {
         static_data: None,
     })?;
     let server = bundle::bundle(spec(project, ("server", &generated.server_entry), Side::Server)).await?;
-    Ok((plan, server.warnings))
+    // Client-only pages are not part of the server bundle: bundle (and scan) the client too.
+    let client = bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?;
+    let mut warnings = server.warnings;
+    for w in client.warnings {
+        if !warnings.contains(&w) {
+            warnings.push(w);
+        }
+    }
+    Ok((plan, warnings))
 }
 
 pub async fn build(project: &Project) -> Result<BuildResult> {

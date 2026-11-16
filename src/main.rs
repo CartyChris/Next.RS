@@ -72,6 +72,25 @@ enum Command {
         #[arg(default_value = ".")]
         root: PathBuf,
     },
+    /// Model Context Protocol server for coding agents: built-in docs, forge:ui lookup,
+    /// and tools to create, check, build and pack projects. Speaks stdio by default.
+    Mcp {
+        /// Serve Streamable HTTP on this port (POST /mcp) instead of stdio, for clients
+        /// that connect over the network such as n8n's MCP Client node.
+        #[arg(long)]
+        http: Option<u16>,
+        /// Interface for --http.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
+    /// Search the documentation built into this binary, or print one document.
+    Docs {
+        /// Words to search for. Without a query, lists the documents.
+        query: Vec<String>,
+        /// Print this whole document: agents, guide, ui, design, architecture.
+        #[arg(long)]
+        read: Option<String>,
+    },
     /// One offline HTML file from an HTML page or a component file (`App.tsx`): CDN scripts
     /// and imports come from npm (verified), everything else is downloaded, and all of it is
     /// inlined and compressed.
@@ -289,6 +308,32 @@ async fn run(cli: Cli) -> Result<()> {
                 human(s.input_bytes as u64),
                 started.elapsed().as_millis()
             );
+        }
+        Command::Mcp { http, host } => match http {
+            Some(port) => nextrs::mcp::serve_http(&host, port).await?,
+            None => nextrs::mcp::serve_stdio().await?,
+        },
+        Command::Docs { query, read } => {
+            if let Some(name) = read {
+                let doc = nextrs::mcp::DOCS.iter().find(|d| d.0 == name);
+                let doc = doc.with_context(|| {
+                    format!("unknown document `{name}`: try agents, guide, ui, design, architecture")
+                })?;
+                println!("{}", doc.2);
+            } else if query.is_empty() {
+                for (name, about, _) in nextrs::mcp::DOCS {
+                    println!("{name:<13} {about}");
+                }
+                println!("\nforge docs <words>      search\nforge docs --read ui    print one document");
+            } else {
+                let ranked = nextrs::mcp::search(&query.join(" "), None);
+                if ranked.is_empty() {
+                    println!("No section matches. Try fewer or different words.");
+                }
+                for (_, section) in ranked.iter().take(3) {
+                    println!("## {} › {}\n\n{}\n", section.doc, section.heading, section.body.trim());
+                }
+            }
         }
         Command::Check { root } => {
             let project = Project::load(&root, Target::Server, Mode::Prod)?;

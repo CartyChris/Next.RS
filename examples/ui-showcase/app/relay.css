@@ -632,3 +632,6 @@ body {
     linear-gradient(180deg, #17122a, #2c1a38);
   overflow: hidden;
 }
+
+/* The playground is a nested Theme: give it room so glass and dark looks read as a surface. */
+.relay-playground { padding-block: 1.5rem 2.5rem; margin-block: -1.5rem -2.5rem; }

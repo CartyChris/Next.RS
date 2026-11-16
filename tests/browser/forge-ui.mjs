@@ -315,6 +315,28 @@ async function checkGallery(page, target, audit) {
   await page.getByRole("radio", { name: "Comfortable", exact: true }).check();
   assert.equal(await playground.getAttribute("data-theme"), "inherit");
 
+  // Named looks: liquid glass blurs what is behind its panels and keeps AA contrast;
+  // terminal is dark and monospaced whatever the page's scheme.
+  const look = page.getByRole("combobox", { name: "Look" });
+  await look.selectOption("liquid-glass");
+  await page.locator('#playground[data-surface="glass"][data-accent="cobalt"][data-radius="lg"]').waitFor();
+  const glass = await page.locator("#playground .forge-ui-card").first().evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { filter: style.backdropFilter || style.webkitBackdropFilter, alpha: style.backgroundColor };
+  });
+  assert.match(glass.filter, /blur\(/, "glass cards blur their backdrop");
+  assert.match(glass.alpha, /rgba|\/ 0?\.\d+/, `glass cards are translucent, got ${glass.alpha}`);
+  assert.ok((await contrastOf(primary)).ratio >= 4.5, "liquid glass keeps button contrast");
+  if (audit) await assertAxe(page, "Liquid glass look");
+  await look.selectOption("terminal");
+  await page.locator('#playground[data-theme="dark"][data-radius="none"]').waitFor();
+  assert.match(await primary.evaluate((element) => getComputedStyle(element).fontFamily), /monospace/);
+  assert.equal(await playground.evaluate((element) => getComputedStyle(element).colorScheme), "dark");
+  assert.ok((await contrastOf(primary)).ratio >= 4.5, "terminal keeps button contrast");
+  if (audit) await assertAxe(page, "Terminal look");
+  await look.selectOption("forge");
+  await page.locator('#playground[data-preset="forge"]:not([data-surface])').waitFor();
+
   // Menu: arrows skip disabled items, type-ahead, Escape returns focus, Enter runs the action.
   const menuButton = page.getByRole("button", { name: "Release", exact: true });
   const item = (name) => page.getByRole("menuitem", { name, exact: false });
@@ -434,6 +456,8 @@ async function checkGallery(page, target, audit) {
   await focusIs(search, "the palette's search field");
   const options = page.getByRole("listbox", { name: "Command palette" }).getByRole("option");
   assert.equal(await options.count(), 6);
+  // Let the open animation finish: mid-fade colors are not the real ones.
+  await delay(250);
   if (audit) await assertAxe(page, "Command palette");
   await page.keyboard.type("guide");
   assert.equal(await options.count(), 1, "typing filters the commands");
