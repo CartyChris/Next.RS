@@ -72,6 +72,22 @@ enum Command {
         #[arg(default_value = ".")]
         root: PathBuf,
     },
+    /// Run a TypeScript or JavaScript file in the embedded engine (the same sandbox as server
+    /// code: `fetch` reaches only `server.allowFetch` hosts). A default-exported function is
+    /// called and its result printed.
+    Run {
+        file: PathBuf,
+        /// Project directory, for forge.config.json and node_modules (default: the file's folder).
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
+    /// Run `*.test.*` and `*.spec.*` files with the built-in `forge:test` API.
+    Test {
+        #[arg(default_value = ".")]
+        root: PathBuf,
+        /// Only files whose path contains this text.
+        filter: Option<String>,
+    },
     /// Model Context Protocol server for coding agents: built-in docs, forge:ui lookup,
     /// and tools to create, check, build and pack projects. Speaks stdio by default.
     Mcp {
@@ -308,6 +324,52 @@ async fn run(cli: Cli) -> Result<()> {
                 human(s.input_bytes as u64),
                 started.elapsed().as_millis()
             );
+        }
+        Command::Run { file, root } => {
+            let dir = root.unwrap_or_else(|| {
+                file.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| ".".into(), PathBuf::from)
+            });
+            let project = Project::load(&dir, Target::Server, Mode::Prod)?;
+            if let Some(output) = build::script::run(&project, &file).await? {
+                println!("{output}");
+            }
+        }
+        Command::Test { root, filter } => {
+            let project = Project::load(&root, Target::Server, Mode::Prod)?;
+            let files = build::script::find_tests(&project.root, filter.as_deref());
+            if files.is_empty() {
+                anyhow::bail!(
+                    "no test files found: name them *.test.ts (or .tsx, .js, .jsx) and import {{ test, expect }} from \"forge:test\""
+                );
+            }
+            let started = std::time::Instant::now();
+            let results = build::script::test(&project, &files).await?;
+            let mut file = "";
+            let (mut passed, mut failed, mut skipped) = (0, 0, 0);
+            for r in &results {
+                if r.file != file {
+                    file = &r.file;
+                    println!("\n{file}");
+                }
+                if r.skipped {
+                    skipped += 1;
+                    println!("  - {} (skipped)", r.name);
+                } else if r.ok {
+                    passed += 1;
+                    println!("  \x1b[32m✓\x1b[0m {} \x1b[2m{:.0} ms\x1b[0m", r.name, r.ms);
+                } else {
+                    failed += 1;
+                    println!("  \x1b[31m✗\x1b[0m {}\n      {}", r.name, r.error);
+                    for line in r.stack.lines().skip(1) {
+                        println!("      {}", line.trim());
+                    }
+                }
+            }
+            let skip = if skipped > 0 { format!(", {skipped} skipped") } else { String::new() };
+            println!("\n{passed} passed, {failed} failed{skip} in {} ms", started.elapsed().as_millis());
+            if failed > 0 {
+                std::process::exit(1);
+            }
         }
         Command::Mcp { http, host } => match http {
             Some(port) => nextrs::mcp::serve_http(&host, port).await?,

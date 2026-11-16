@@ -109,7 +109,7 @@ pub fn search(query: &str, only: Option<&str>) -> Vec<(usize, Section)> {
             (matched > 0).then(|| (score + if matched == words.len() { 100 } else { 0 }, s))
         })
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.0));
     ranked
 }
 
@@ -241,7 +241,7 @@ pub fn find_themes(query: &str) -> Vec<Value> {
             (score > 0).then_some((score, theme))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|r| std::cmp::Reverse(r.0));
     scored.into_iter().map(|(_, t)| t).collect()
 }
 
@@ -334,6 +334,16 @@ fn tools() -> Value {
                 "target": { "type": "string", "enum": ["server", "static", "single-html"], "default": "server" }
             } },
             "annotations": writes
+        },
+        {
+            "name": "forge_test",
+            "title": "Run a project's tests",
+            "description": "Run the project's *.test.* and *.spec.* files (written with `import { test, expect } from \"forge:test\"`) in the embedded engine and return each test's result. Use it to verify loaders, API handlers and plain logic after a change.",
+            "inputSchema": { "type": "object", "properties": {
+                "root": root,
+                "filter": { "type": "string", "description": "Only files whose path contains this text" }
+            } },
+            "annotations": read_only
         },
         {
             "name": "forge_pack",
@@ -554,6 +564,29 @@ async fn call_tool(name: &str, args: &Value) -> Result<Value> {
                 "ms": result.elapsed.as_millis() as u64,
             });
             Ok(text_result(serde_json::to_string_pretty(&value)?, Some(value)))
+        }
+        "forge_test" => {
+            let project = project(args, Target::Server, Mode::Prod)?;
+            let files = build::script::find_tests(&project.root, arg_str(args, "filter"));
+            if files.is_empty() {
+                bail!(
+                    "No test files found. Name them *.test.ts (or .tsx, .js, .jsx) and import {{ test, expect }} from \"forge:test\"."
+                );
+            }
+            let results = build::script::test(&project, &files).await?;
+            let failed: Vec<&build::script::TestResult> = results.iter().filter(|r| !r.ok && !r.skipped).collect();
+            let passed = results.iter().filter(|r| r.ok).count();
+            let mut text = format!("{passed} passed, {} failed\n", failed.len());
+            for r in &failed {
+                text.push_str(&format!("✗ {} › {}\n  {}\n", r.file, r.name, r.error));
+            }
+            let value = json!({
+                "ok": failed.is_empty(),
+                "passed": passed,
+                "failed": failed.len(),
+                "tests": results.iter().map(|r| json!({ "file": r.file, "name": r.name, "ok": r.ok, "skipped": r.skipped, "error": r.error })).collect::<Vec<_>>(),
+            });
+            Ok(text_result(text, Some(value)))
         }
         "forge_pack" => pack(args).await,
         other => bail!("Unknown tool \"{other}\". Call tools/list for the available tools."),

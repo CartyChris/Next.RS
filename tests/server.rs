@@ -424,3 +424,117 @@ async fn server_intl_matches_browser_en_us() {
     assert_eq!(got, want);
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn n8n_webhooks_in_both_directions() {
+    use axum::{extract::Request as AxumRequest, routing::any};
+    // A stand-in for n8n: a Webhook node that echoes what it received, and one that is inactive.
+    let n8n = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let n8n_url = format!("http://{}", n8n.local_addr().unwrap());
+    let router = axum::Router::new()
+        .route(
+            "/webhook/order",
+            any(|req: AxumRequest| async move {
+                let secret = req.headers().get("x-n8n-secret").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                let query = req.uri().query().unwrap_or("").to_string();
+                let body = axum::body::to_bytes(req.into_body(), 1 << 20).await.unwrap();
+                let body: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+                if secret != "s3cret" {
+                    return (StatusCode::FORBIDDEN, "{\"message\":\"Authorization data is wrong!\"}".to_string());
+                }
+                (
+                    StatusCode::OK,
+                    serde_json::json!({ "received": body, "query": query, "workflow": "order" }).to_string(),
+                )
+            }),
+        )
+        .route("/webhook/missing", any(|| async { (StatusCode::NOT_FOUND, "{\"message\":\"not registered\"}") }));
+    tokio::spawn(async move { axum::serve(n8n, router).await });
+
+    let root = project(
+        "n8n",
+        &[
+            ("app/page.js", "export const render = () => '';"),
+            (
+                "app/api/order/route.js",
+                r#"import { trigger, WorkflowError } from "forge:n8n";
+export async function POST(request, { env, searchParams }) {
+  try {
+    const path = searchParams.get("path") ?? "order";
+    const result = await trigger(`${env.N8N_URL}/webhook/${path}`, await request.json(), {
+      secret: searchParams.get("secret") ?? env.N8N_SECRET, query: { source: "forge" },
+    });
+    return { ok: true, result };
+  } catch (e) {
+    return Response.json({ ok: false, name: e.name, isWorkflowError: e instanceof WorkflowError, status: e.status, message: e.message }, { status: 502 });
+  }
+}"#,
+            ),
+            (
+                "app/api/hook/route.js",
+                r#"import { webhook, WorkflowError } from "forge:n8n";
+export const POST = webhook(async ({ body, query }) => {
+  if (!body?.id) throw new WorkflowError("id is required", 422);
+  return { stored: body.id, tag: query.tag ?? null };
+}, { secret: (ctx) => ctx.env.N8N_SECRET });"#,
+            ),
+            ("forge.config.json", r#"{"server":{"allowFetch":["127.0.0.1"],"env":["N8N_URL","N8N_SECRET"]}}"#),
+            (".env", &format!("N8N_URL={n8n_url}\nN8N_SECRET=s3cret\n")),
+        ],
+    );
+    let app = serve(&root).await;
+    let json =
+        |r: &Res| serde_json::from_str::<serde_json::Value>(&r.body).unwrap_or_else(|_| panic!("not JSON: {}", r.body));
+
+    // App → n8n: the secret header, the JSON body and the query all arrive; the reply is parsed.
+    let sent =
+        request(&app, Method::POST, "/api/order", &[("content-type", "application/json")], r#"{"sku":"A1","qty":2}"#)
+            .await;
+    let v = json(&sent);
+    assert_eq!(v["result"]["received"], serde_json::json!({ "sku": "A1", "qty": 2 }), "{v}");
+    assert_eq!(v["result"]["query"], "source=forge");
+    // Failures carry the status and a hint about the likely cause.
+    let wrong = json(&request(&app, Method::POST, "/api/order?secret=nope", &[], "{}").await);
+    assert_eq!((wrong["isWorkflowError"].as_bool(), wrong["status"].as_u64()), (Some(true), Some(403)), "{wrong}");
+    assert!(wrong["message"].as_str().unwrap().contains("authentication"), "{wrong}");
+    let inactive = json(&request(&app, Method::POST, "/api/order?path=missing", &[], "{}").await);
+    assert!(inactive["message"].as_str().unwrap().contains("is the workflow active"), "{inactive}");
+
+    // n8n → app: secret enforced (header or bearer), JSON and form bodies parsed, errors mapped.
+    let none = request(&app, Method::POST, "/api/hook", &[], r#"{"id":7}"#).await;
+    assert_eq!(none.status, 401);
+    assert!(none.body.contains("x-n8n-secret"), "{}", none.body);
+    let bad = request(&app, Method::POST, "/api/hook", &[("x-n8n-secret", "s3creT")], r#"{"id":7}"#).await;
+    assert_eq!(bad.status, 401);
+    let ok = request(
+        &app,
+        Method::POST,
+        "/api/hook?tag=vip",
+        &[("x-n8n-secret", "s3cret"), ("content-type", "application/json")],
+        r#"{"id":7}"#,
+    )
+    .await;
+    assert_eq!((ok.status.as_u16(), ok.body.as_str()), (200, r#"{"stored":7,"tag":"vip"}"#));
+    let bearer = request(
+        &app,
+        Method::POST,
+        "/api/hook",
+        &[("authorization", "Bearer s3cret"), ("content-type", "application/x-www-form-urlencoded")],
+        "id=form-1",
+    )
+    .await;
+    assert_eq!(json(&bearer)["stored"], "form-1");
+    let invalid = request(
+        &app,
+        Method::POST,
+        "/api/hook",
+        &[("x-n8n-secret", "s3cret"), ("content-type", "application/json")],
+        r#"{"other":1}"#,
+    )
+    .await;
+    assert_eq!(
+        (invalid.status.as_u16(), json(&invalid)["error"].as_str().unwrap().to_string()),
+        (422, "id is required".to_string())
+    );
+    std::fs::remove_dir_all(root).ok();
+}

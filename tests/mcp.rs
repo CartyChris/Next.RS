@@ -61,6 +61,7 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -95,6 +96,7 @@ fn mcp_session_over_stdio() {
         "forge_routes",
         "forge_check",
         "forge_build",
+        "forge_test",
         "forge_pack",
     ] {
         assert!(names.contains(&expected), "{expected} missing from {names:?}");
@@ -147,6 +149,17 @@ fn mcp_session_over_stdio() {
     let (_, built, is_error) = s.tool("forge_build", json!({ "root": "site", "target": "single-html" }));
     assert!(!is_error && built["files"][0]["bytes"].as_u64().unwrap() > 1000, "{built}");
     assert!(dir.join("site/dist/index.html").is_file());
+
+    // Tests run in the engine; failures are listed with their message.
+    std::fs::write(
+        dir.join("site/math.test.js"),
+        "import { test, expect } from 'forge:test';\ntest('adds', () => expect(1 + 1).toBe(2));\ntest('fails', () => expect(1).toBe(3));\n",
+    )
+    .unwrap();
+    let (report, tested, is_error) = s.tool("forge_test", json!({ "root": "site" }));
+    assert!(!is_error && tested["passed"] == 1 && tested["failed"] == 1 && tested["ok"] == false, "{tested}");
+    assert!(report.contains("fails"), "{report}");
+    std::fs::remove_file(dir.join("site/math.test.js")).unwrap();
 
     // Failures are readable results with a next step, not protocol errors.
     std::fs::write(dir.join("site/app/page.js"), "export function mount() { eval('1'); }").unwrap();
@@ -207,4 +220,5 @@ async fn mcp_over_http_for_network_clients() {
         .unwrap();
     assert_eq!(foreign.status(), 403);
     let _ = child.kill();
+    let _ = child.wait();
 }

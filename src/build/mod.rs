@@ -11,6 +11,7 @@ pub mod bundle;
 pub mod generated;
 pub mod html;
 pub mod manifest;
+pub mod script;
 
 use std::{
     collections::{BTreeMap, HashMap},
