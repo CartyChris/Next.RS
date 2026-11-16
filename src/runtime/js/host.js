@@ -731,4 +731,192 @@
     res.url = url;
     return res;
   };
+  // ---- Intl (en-US) ----
+  // The engine has no ICU. Without this, `n.toLocaleString()` and `Intl.NumberFormat` render
+  // differently on the server and in the browser, which breaks hydration. This covers the
+  // common cases with en-US conventions; other locales fall back to them. Dates are formatted
+  // in UTC: pass `timeZone: "UTC"` in shared code so the browser prints the same text.
+  if (typeof g.Intl === "undefined") {
+    const group = (digits) => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    const SYMBOLS = { USD: "$", EUR: "€", GBP: "£", JPY: "¥", CNY: "CN¥", INR: "₹", KRW: "₩", CAD: "CA$", AUD: "A$", MXN: "MX$", BRL: "R$", CHF: "CHF ", SEK: "SEK ", NOK: "NOK ", PLN: "PLN " };
+    const NO_MINOR = new Set(["JPY", "KRW", "VND", "CLP", "ISK", "HUF"]);
+    const UNITS = { kilobyte: "kB", megabyte: "MB", gigabyte: "GB", byte: "byte", percent: "%", second: "sec", millisecond: "ms", minute: "min", hour: "hr", day: "day", kilometer: "km", meter: "m", kilogram: "kg", celsius: "°C", fahrenheit: "°F" };
+    class NumberFormat {
+      constructor(locales, options = {}) {
+        this.o = { style: "decimal", useGrouping: true, ...options };
+      }
+      resolvedOptions() {
+        return { locale: "en-US", numberingSystem: "latn", ...this.o };
+      }
+      format(input) {
+        const o = this.o;
+        let n = Number(input);
+        if (Number.isNaN(n)) return "NaN";
+        if (!Number.isFinite(n)) return n < 0 ? "-∞" : "∞";
+        const currency = o.style === "currency" ? String(o.currency ?? "USD").toUpperCase() : null;
+        if (o.style === "percent") n *= 100;
+        let suffix = "";
+        let compact = false;
+        if (o.notation === "compact" && Math.abs(n) >= 1000) {
+          // Two significant digits below 100 (1.2K, 15M); rounding up may reach the next unit (999,999 → 1M).
+          const steps = [[1e3, "K"], [1e6, "M"], [1e9, "B"], [1e12, "T"]];
+          let at = steps.findLastIndex(([s]) => Math.abs(n) >= s);
+          const scaled = (v) => v / steps[at][0];
+          const rounded = Math.abs(Number(scaled(n).toFixed(Math.abs(scaled(n)) < 10 ? 1 : 0)));
+          if (rounded >= 1000 && at < steps.length - 1) at += 1;
+          n = scaled(n);
+          suffix = steps[at][1];
+          compact = true;
+        }
+        const baseMin = currency ? (NO_MINOR.has(currency) ? 0 : 2) : 0;
+        const baseMax = currency ? baseMin : o.style === "percent" ? 0 : 3;
+        let min = o.minimumFractionDigits ?? Math.min(baseMin, o.maximumFractionDigits ?? baseMin);
+        let max = Math.max(min, o.maximumFractionDigits ?? Math.max(baseMax, min));
+        if (compact && o.maximumFractionDigits === undefined) [min, max] = [0, Number(Math.abs(n).toFixed(1)) < 10 ? 1 : 0];
+        let text;
+        if (o.maximumSignificantDigits) {
+          text = String(Number(Math.abs(n).toPrecision(o.maximumSignificantDigits)));
+          if (text.includes("e")) text = Math.abs(n).toFixed(0);
+        } else {
+          text = Math.abs(n).toFixed(max);
+          if (max > min) text = text.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+          const decimals = text.includes(".") ? text.length - text.indexOf(".") - 1 : 0;
+          if (decimals < min) text += (decimals ? "" : ".") + "0".repeat(min - decimals);
+        }
+        let [whole, fraction] = text.split(".");
+        if (o.minimumIntegerDigits) whole = whole.padStart(o.minimumIntegerDigits, "0");
+        if (o.useGrouping !== false) whole = group(whole);
+        let body = fraction ? `${whole}.${fraction}` : whole;
+        const zero = Number(text) === 0;
+        const sign = n < 0 && !zero ? "-" : (o.signDisplay === "always" || (o.signDisplay === "exceptZero" && !zero)) && n >= 0 ? "+" : "";
+        body += suffix;
+        if (currency) body = (SYMBOLS[currency] ?? `${currency} `) + body;
+        else if (o.style === "percent") body += "%";
+        else if (o.style === "unit" && o.unit) {
+          const unit = UNITS[o.unit] ?? o.unit;
+          body += o.unit === "percent" || unit.startsWith("°") ? unit : ` ${unit}${unit === "day" || unit === "byte" ? (Number(text) === 1 ? "" : "s") : ""}`;
+        }
+        return sign + body;
+      }
+      formatToParts(input) {
+        return [{ type: "literal", value: this.format(input) }];
+      }
+      static supportedLocalesOf() {
+        return ["en-US"];
+      }
+    }
+
+    const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const two = (v) => String(v).padStart(2, "0");
+    class DateTimeFormat {
+      constructor(locales, options = {}) {
+        let o = { ...options };
+        const ds = { full: { weekday: "long", month: "long", day: "numeric", year: "numeric" }, long: { month: "long", day: "numeric", year: "numeric" }, medium: { month: "short", day: "numeric", year: "numeric" }, short: { month: "numeric", day: "numeric", year: "2-digit" } }[o.dateStyle];
+        const ts = { full: { hour: "numeric", minute: "2-digit", second: "2-digit", zone: true }, long: { hour: "numeric", minute: "2-digit", second: "2-digit", zone: true }, medium: { hour: "numeric", minute: "2-digit", second: "2-digit" }, short: { hour: "numeric", minute: "2-digit" } }[o.timeStyle];
+        if (ds || ts) o = { ...o, ...ds, ...ts };
+        const any = ["weekday", "year", "month", "day", "hour", "minute", "second"].some((k) => o[k] !== undefined);
+        if (!any) o = { ...o, year: "numeric", month: "numeric", day: "numeric" };
+        this.o = o;
+      }
+      resolvedOptions() {
+        return { locale: "en-US", calendar: "gregory", numberingSystem: "latn", timeZone: "UTC", ...this.o };
+      }
+      format(input) {
+        const o = this.o;
+        const d = input === undefined ? new Date() : new Date(input);
+        if (Number.isNaN(d.getTime())) throw new RangeError("Invalid time value");
+        const [y, m, day, wd] = [d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCDay()];
+        const year = o.year === "2-digit" ? two(y % 100) : o.year ? String(y) : "";
+        const weekday = o.weekday ? (o.weekday === "long" ? DAYS[wd] : o.weekday === "narrow" ? DAYS[wd][0] : DAYS[wd].slice(0, 3)) : "";
+        let date = "";
+        if (o.month === "long" || o.month === "short" || o.month === "narrow") {
+          const name = o.month === "long" ? MONTHS[m] : o.month === "narrow" ? MONTHS[m][0] : MONTHS[m].slice(0, 3);
+          date = o.day ? `${name} ${o.day === "2-digit" ? two(day) : day}` : name;
+          if (year) date += o.day ? `, ${year}` : ` ${year}`;
+        } else {
+          const parts = [];
+          if (o.month) parts.push(o.month === "2-digit" ? two(m + 1) : String(m + 1));
+          if (o.day) parts.push(o.day === "2-digit" ? two(day) : String(day));
+          if (year) parts.push(year);
+          date = parts.join("/");
+        }
+        if (weekday) date = date ? `${weekday}, ${date}` : weekday;
+        let time = "";
+        if (o.hour !== undefined || o.minute !== undefined || o.second !== undefined) {
+          const h24 = o.hour12 === false || o.hourCycle === "h23";
+          const hours = d.getUTCHours();
+          const h = h24 ? hours : hours % 12 || 12;
+          const parts = [];
+          if (o.hour !== undefined) parts.push(o.hour === "2-digit" || (h24 && o.minute !== undefined) ? two(h) : String(h));
+          if (o.minute !== undefined) parts.push(o.hour !== undefined || o.minute === "2-digit" ? two(d.getUTCMinutes()) : String(d.getUTCMinutes()));
+          if (o.second !== undefined) parts.push(parts.length || o.second === "2-digit" ? two(d.getUTCSeconds()) : String(d.getUTCSeconds()));
+          time = parts.join(":");
+          if (!h24 && o.hour !== undefined) time += hours < 12 ? " AM" : " PM";
+          if (o.zone || o.timeZoneName) time += " UTC";
+        }
+        const joiner = o.dateStyle === "long" || o.dateStyle === "full" ? " at " : ", ";
+        return date && time ? date + joiner + time : date || time;
+      }
+      formatToParts(input) {
+        return [{ type: "literal", value: this.format(input) }];
+      }
+      static supportedLocalesOf() {
+        return ["en-US"];
+      }
+    }
+
+    class PluralRules {
+      constructor(locales, options = {}) {
+        this.ordinal = options.type === "ordinal";
+      }
+      select(n) {
+        if (!this.ordinal) return n === 1 ? "one" : "other";
+        const [ten, hundred] = [n % 10, n % 100];
+        if (ten === 1 && hundred !== 11) return "one";
+        if (ten === 2 && hundred !== 12) return "two";
+        if (ten === 3 && hundred !== 13) return "few";
+        return "other";
+      }
+    }
+    class RelativeTimeFormat {
+      constructor(locales, options = {}) {
+        this.auto = options.numeric === "auto";
+      }
+      format(value, unit) {
+        const u = String(unit).replace(/s$/, "");
+        if (this.auto && u === "day" && Math.abs(value) <= 1) return ["yesterday", "today", "tomorrow"][value + 1];
+        if (this.auto && value === 0) return u === "second" ? "now" : `this ${u}`;
+        const count = `${new NumberFormat().format(Math.abs(value))} ${u}${Math.abs(value) === 1 ? "" : "s"}`;
+        return value < 0 || Object.is(value, -0) ? `${count} ago` : `in ${count}`;
+      }
+    }
+    class ListFormat {
+      constructor(locales, options = {}) {
+        this.word = options.type === "disjunction" ? "or" : "and";
+      }
+      format(items) {
+        const list = [...items].map(String);
+        if (list.length < 3) return list.join(` ${this.word} `);
+        return `${list.slice(0, -1).join(", ")}, ${this.word} ${list[list.length - 1]}`;
+      }
+    }
+    g.Intl = { NumberFormat, DateTimeFormat, PluralRules, RelativeTimeFormat, ListFormat, getCanonicalLocales: () => ["en-US"] };
+    Number.prototype.toLocaleString = function (locales, options) {
+      return new NumberFormat(locales, options).format(this);
+    };
+    const dateDefaults = { year: "numeric", month: "numeric", day: "numeric" };
+    const timeDefaults = { hour: "numeric", minute: "2-digit", second: "2-digit" };
+    const has = (o, keys) => o && keys.some((k) => o[k] !== undefined);
+    Date.prototype.toLocaleDateString = function (locales, options) {
+      return new DateTimeFormat(locales, has(options, ["weekday", "year", "month", "day", "dateStyle"]) ? options : { ...options, ...dateDefaults }).format(this);
+    };
+    Date.prototype.toLocaleTimeString = function (locales, options) {
+      return new DateTimeFormat(locales, has(options, ["hour", "minute", "second", "timeStyle"]) ? options : { ...options, ...timeDefaults }).format(this);
+    };
+    Date.prototype.toLocaleString = function (locales, options) {
+      const given = has(options, ["weekday", "year", "month", "day", "hour", "minute", "second", "dateStyle", "timeStyle"]);
+      return new DateTimeFormat(locales, given ? options : { ...options, ...dateDefaults, ...timeDefaults }).format(this);
+    };
+  }
 })();

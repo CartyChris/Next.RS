@@ -17,28 +17,34 @@
   --forge-ui-space-7: 3rem;
   --forge-ui-radius: 0.5rem;
   --forge-ui-radius-panel: 0.75rem;
-  /* The height of buttons and inputs. 2.75rem keeps touch targets at 44px. */
-  --forge-ui-control-size: 2.75rem;
+  /* The height of buttons and inputs: 40px with a mouse, 44px for touch (see below). */
+  --forge-ui-control-size: 2.5rem;
   --forge-ui-motion: 140ms;
   /* One palette switch is empty, so only the other var() takes its fallback. */
   --forge-ui-light: initial;
   --forge-ui-dark: ;
-  --forge-ui-shadow: var(--forge-ui-light, 0 1px 2px rgb(34 24 56 / 6%), 0 6px 20px rgb(34 24 56 / 5%)) var(--forge-ui-dark, 0 1px 2px rgb(0 0 0 / 20%), 0 6px 20px rgb(0 0 0 / 18%));
-  --forge-ui-shadow-raised: var(--forge-ui-light, 0 18px 60px rgb(25 17 48 / 22%), 0 4px 12px rgb(25 17 48 / 8%)) var(--forge-ui-dark, 0 18px 60px rgb(0 0 0 / 55%), 0 4px 12px rgb(0 0 0 / 30%));
-  --forge-ui-bg: var(--forge-ui-light, #f7f6fb) var(--forge-ui-dark, #161421);
-  --forge-ui-surface: var(--forge-ui-light, #fff) var(--forge-ui-dark, #201d2e);
-  --forge-ui-surface-raised: var(--forge-ui-light, #fff) var(--forge-ui-dark, #29253a);
-  --forge-ui-subtle: var(--forge-ui-light, #edeaf5) var(--forge-ui-dark, #2e2940);
-  --forge-ui-edge: var(--forge-ui-light, #d9d5e3) var(--forge-ui-dark, #413951);
-  --forge-ui-control-edge: var(--forge-ui-light, #827a94) var(--forge-ui-dark, #807391);
-  --forge-ui-text: var(--forge-ui-light, #211d2e) var(--forge-ui-dark, #f4efff);
-  --forge-ui-muted: var(--forge-ui-light, #5e576e) var(--forge-ui-dark, #c1b7d0);
-  --forge-ui-focus: var(--forge-ui-light, #6948dc) var(--forge-ui-dark, #c0a9ff);
-  --forge-ui-accent: var(--forge-ui-light, #563ab9) var(--forge-ui-dark, #baa7ff);
-  --forge-ui-accent-hover: var(--forge-ui-light, #472b9c) var(--forge-ui-dark, #d0c1ff);
-  --forge-ui-on-accent: var(--forge-ui-light, #fff) var(--forge-ui-dark, #26124f);
-  --forge-ui-accent-soft: var(--forge-ui-light, #efebff) var(--forge-ui-dark, #3a2a61);
-  --forge-ui-accent-text: var(--forge-ui-light, #4e33a7) var(--forge-ui-dark, #d6c8ff);
+  /* One hue drives the whole palette: the accent at full chroma, and the neutrals with a
+     trace of it so grays sit comfortably beside the accent. Lightness is fixed per role,
+     which keeps contrast the same for every hue. */
+  --forge-ui-accent-h: 42;
+  --forge-ui-accent-c: 1;
+  --forge-ui-neutral-c: 1;
+  --forge-ui-shadow: var(--forge-ui-light, 0 1px 2px rgb(0 0 0 / 5%), 0 4px 12px rgb(0 0 0 / 4%)) var(--forge-ui-dark, 0 1px 2px rgb(0 0 0 / 24%), 0 4px 12px rgb(0 0 0 / 20%));
+  --forge-ui-shadow-raised: var(--forge-ui-light, 0 16px 48px rgb(0 0 0 / 16%), 0 4px 12px rgb(0 0 0 / 6%)) var(--forge-ui-dark, 0 16px 48px rgb(0 0 0 / 56%), 0 4px 12px rgb(0 0 0 / 32%));
+  --forge-ui-bg: var(--forge-ui-light, oklch(0.972 calc(0.004 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.17 calc(0.006 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-surface: var(--forge-ui-light, #fff) var(--forge-ui-dark, oklch(0.205 calc(0.007 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-surface-raised: var(--forge-ui-light, #fff) var(--forge-ui-dark, oklch(0.245 calc(0.008 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-subtle: var(--forge-ui-light, oklch(0.945 calc(0.006 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.275 calc(0.009 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-edge: var(--forge-ui-light, oklch(0.895 calc(0.008 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.33 calc(0.01 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-control-edge: var(--forge-ui-light, oklch(0.62 calc(0.012 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.58 calc(0.012 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-text: var(--forge-ui-light, oklch(0.21 calc(0.012 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.955 calc(0.006 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-muted: var(--forge-ui-light, oklch(0.47 calc(0.014 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.76 calc(0.012 * var(--forge-ui-neutral-c)) var(--forge-ui-accent-h)));
+  --forge-ui-focus: var(--forge-ui-light, oklch(0.52 calc(0.2 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.82 calc(0.12 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
+  --forge-ui-accent: var(--forge-ui-light, oklch(0.47 calc(0.17 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.8 calc(0.11 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
+  --forge-ui-accent-hover: var(--forge-ui-light, oklch(0.39 calc(0.16 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.87 calc(0.09 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
+  --forge-ui-on-accent: var(--forge-ui-light, #fff) var(--forge-ui-dark, oklch(0.22 calc(0.07 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
+  --forge-ui-accent-soft: var(--forge-ui-light, oklch(0.95 calc(0.03 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.33 calc(0.08 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
+  --forge-ui-accent-text: var(--forge-ui-light, oklch(0.42 calc(0.16 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.88 calc(0.08 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
   --forge-ui-info-bg: var(--forge-ui-light, #e8efff) var(--forge-ui-dark, #243256);
   --forge-ui-info-text: var(--forge-ui-light, #24449e) var(--forge-ui-dark, #c1d2ff);
   --forge-ui-success-bg: var(--forge-ui-light, #e1f5ec) var(--forge-ui-dark, #193b33);
@@ -50,7 +56,7 @@
   --forge-ui-danger: var(--forge-ui-light, #a02350) var(--forge-ui-dark, #f6aaca);
   --forge-ui-danger-hover: var(--forge-ui-light, #81163d) var(--forge-ui-dark, #ffd0e2);
   --forge-ui-on-danger: var(--forge-ui-light, #fff) var(--forge-ui-dark, #4d0928);
-  --forge-ui-backdrop: var(--forge-ui-light, rgb(24 18 39 / 60%)) var(--forge-ui-dark, rgb(8 6 14 / 72%));
+  --forge-ui-backdrop: var(--forge-ui-light, rgb(12 12 14 / 52%)) var(--forge-ui-dark, rgb(0 0 0 / 66%));
   color-scheme: light;
   background-color: var(--forge-ui-bg);
   color: var(--forge-ui-text);
@@ -81,12 +87,8 @@
   }
 }
 
-.forge-ui-container,
-.forge-ui-button,
-.forge-ui-control,
-.forge-ui-card,
-.forge-ui-dialog,
-.forge-ui-notifications {
+/* Sizes include padding and borders everywhere inside a Theme (zero specificity, so app CSS wins). */
+:where(.forge-ui, .forge-ui *, .forge-ui *::before, .forge-ui *::after) {
   box-sizing: border-box;
 }
 
@@ -225,6 +227,8 @@
 
 .forge-ui-field {
   display: grid;
+  /* In a stretched grid or flex cell, keep the rows their own height. */
+  align-content: start;
   gap: var(--forge-ui-space-2);
   min-width: 0;
   color: var(--forge-ui-text);
@@ -263,7 +267,7 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
   align-items: start;
   column-gap: var(--forge-ui-space-2);
 }
-.forge-ui-field[data-checkbox] > :not(.forge-ui-checkbox) { grid-column: 2; }
+.forge-ui-field[data-checkbox] > :not(.forge-ui-checkbox, .forge-ui-switch) { grid-column: 2; }
 .forge-ui-checkbox {
   grid-column: 1;
   grid-row: 1;
@@ -423,26 +427,25 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
    Theme engine: accent, radius, density
    ========================================================================== */
 
-/* An accent is one hue. Lightness and chroma are fixed per role, so every accent keeps
-   the same contrast: AA for text on the accent and for accent text on its soft surface. */
-.forge-ui[data-accent] {
-  --forge-ui-accent-c: 1;
-  --forge-ui-focus: var(--forge-ui-light, oklch(0.52 calc(0.2 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.82 calc(0.12 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
-  --forge-ui-accent: var(--forge-ui-light, oklch(0.47 calc(0.17 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.8 calc(0.11 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
-  --forge-ui-accent-hover: var(--forge-ui-light, oklch(0.39 calc(0.16 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.87 calc(0.09 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
-  --forge-ui-on-accent: var(--forge-ui-light, #fff) var(--forge-ui-dark, oklch(0.22 calc(0.07 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
-  --forge-ui-accent-soft: var(--forge-ui-light, oklch(0.95 calc(0.03 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.33 calc(0.08 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
-  --forge-ui-accent-text: var(--forge-ui-light, oklch(0.42 calc(0.16 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h))) var(--forge-ui-dark, oklch(0.88 calc(0.08 * var(--forge-ui-accent-c)) var(--forge-ui-accent-h)));
-}
-.forge-ui[data-accent="ember"] { --forge-ui-accent-h: 38; }
+/* Accent presets set the hue. `steel` also mutes the accent to a near-neutral. */
+.forge-ui[data-accent="ember"] { --forge-ui-accent-h: 42; }
+.forge-ui[data-accent="violet"] { --forge-ui-accent-h: 292; }
 .forge-ui[data-accent="cobalt"] { --forge-ui-accent-h: 256; }
 .forge-ui[data-accent="verdigris"] { --forge-ui-accent-h: 182; }
 .forge-ui[data-accent="gold"] { --forge-ui-accent-h: 82; }
 .forge-ui[data-accent="rose"] { --forge-ui-accent-h: 8; }
 .forge-ui[data-accent="steel"] { --forge-ui-accent-h: 250; --forge-ui-accent-c: 0.2; }
 
-/* Any CSS color: keep its hue (and its chroma, up to the cap), replace its lightness. */
+/* Any CSS color: keep its hue (and its chroma, up to each role's cap), replace its lightness. */
 .forge-ui[data-accent="from"] {
+  --forge-ui-bg: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.972 min(c, 0.004) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.17 min(c, 0.006) h));
+  --forge-ui-surface: var(--forge-ui-light, #fff) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.205 min(c, 0.007) h));
+  --forge-ui-surface-raised: var(--forge-ui-light, #fff) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.245 min(c, 0.008) h));
+  --forge-ui-subtle: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.945 min(c, 0.006) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.275 min(c, 0.009) h));
+  --forge-ui-edge: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.895 min(c, 0.008) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.33 min(c, 0.01) h));
+  --forge-ui-control-edge: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.62 min(c, 0.012) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.58 min(c, 0.012) h));
+  --forge-ui-text: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.21 min(c, 0.012) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.955 min(c, 0.006) h));
+  --forge-ui-muted: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.47 min(c, 0.014) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.76 min(c, 0.012) h));
   --forge-ui-focus: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.52 min(c, 0.2) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.82 min(c, 0.12) h));
   --forge-ui-accent: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.47 min(c, 0.17) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.8 min(c, 0.11) h));
   --forge-ui-accent-hover: var(--forge-ui-light, oklch(from var(--forge-ui-accent-source) 0.39 min(c, 0.16) h)) var(--forge-ui-dark, oklch(from var(--forge-ui-accent-source) 0.87 min(c, 0.09) h));
@@ -457,8 +460,11 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
 .forge-ui[data-radius="lg"] { --forge-ui-radius: 0.75rem; --forge-ui-radius-panel: 1.125rem; }
 .forge-ui[data-radius="full"] { --forge-ui-radius: 999px; --forge-ui-radius-panel: 1.25rem; }
 
+@media (pointer: coarse) {
+  .forge-ui:not([data-density]), .forge-ui[data-density="comfortable"] { --forge-ui-control-size: 2.75rem; }
+}
 .forge-ui[data-density="compact"] {
-  --forge-ui-control-size: 2.25rem;
+  --forge-ui-control-size: 2rem;
   --forge-ui-space-3: 0.5rem;
   --forge-ui-space-4: 0.75rem;
   --forge-ui-space-5: 1rem;
@@ -466,7 +472,7 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
   --forge-ui-space-7: 2rem;
 }
 .forge-ui[data-density="spacious"] {
-  --forge-ui-control-size: 3.25rem;
+  --forge-ui-control-size: 3rem;
   --forge-ui-space-4: 1.25rem;
   --forge-ui-space-5: 2rem;
   --forge-ui-space-6: 2.5rem;
@@ -794,7 +800,7 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
 .forge-ui-page[aria-current="page"] { background: var(--forge-ui-accent-soft); color: var(--forge-ui-accent-text); }
 .forge-ui-page-gap { display: inline-block; min-inline-size: 1.5rem; text-align: center; color: var(--forge-ui-muted); }
 
-.forge-ui-accordion { border: 1px solid var(--forge-ui-edge); border-radius: var(--forge-ui-radius-panel); background: var(--forge-ui-surface); }
+.forge-ui-accordion { align-self: start; border: 1px solid var(--forge-ui-edge); border-radius: var(--forge-ui-radius-panel); background: var(--forge-ui-surface); }
 .forge-ui-accordion-item + .forge-ui-accordion-item { border-block-start: 1px solid var(--forge-ui-edge); }
 .forge-ui-accordion-summary {
   display: flex;
@@ -829,6 +835,8 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
    ========================================================================== */
 
 .forge-ui-switch {
+  grid-column: 1;
+  grid-row: 1;
   appearance: none;
   position: relative;
   flex-shrink: 0;
@@ -848,7 +856,7 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
   inline-size: 1.125rem;
   block-size: 1.125rem;
   border-radius: 50%;
-  background: var(--forge-ui-surface);
+  background: var(--forge-ui-light, #fff) var(--forge-ui-dark, var(--forge-ui-text));
   transition: translate var(--forge-ui-motion);
 }
 .forge-ui-switch:checked { background: var(--forge-ui-accent); }
@@ -871,15 +879,18 @@ textarea.forge-ui-control { min-height: 5.5rem; resize: vertical; }
 
 .forge-ui-segmented-track {
   display: inline-flex;
+  flex-wrap: wrap;
+  box-sizing: border-box;
   max-width: 100%;
   padding: 0.1875rem;
   border-radius: calc(var(--forge-ui-radius) + 0.1875rem);
   background: var(--forge-ui-subtle);
   box-shadow: inset 0 0 0 1px var(--forge-ui-edge);
 }
-.forge-ui-segment { position: relative; display: inline-flex; min-width: 0; cursor: pointer; }
+.forge-ui-segment { position: relative; display: inline-flex; flex: 1 1 auto; min-width: 0; cursor: pointer; }
 .forge-ui-segment input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: inherit; }
 .forge-ui-segment span {
+  flex: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;

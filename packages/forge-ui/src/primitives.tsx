@@ -7,8 +7,8 @@ export type ThemeMode = "system" | "light" | "dark" | "inherit";
 export type Spacing = "xs" | "sm" | "md" | "lg" | "xl";
 export type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
-/** Built-in accent palettes. Any CSS color or an OKLCH hue (0–360) also works. */
-export type AccentPreset = "violet" | "ember" | "cobalt" | "verdigris" | "gold" | "rose" | "steel";
+/** Built-in accent palettes; `ember` is the default. Any CSS color or an OKLCH hue (0–360) also works. */
+export type AccentPreset = "ember" | "violet" | "cobalt" | "verdigris" | "gold" | "rose" | "steel";
 export type Accent = AccentPreset | (string & {}) | number;
 export type Radius = "none" | "sm" | "md" | "lg" | "full";
 export type Density = "compact" | "comfortable" | "spacious";
@@ -21,7 +21,7 @@ export type ThemeToken =
   | "radius" | "radius-panel" | "shadow" | "shadow-raised" | "control-size";
 export type ThemeTokens = Partial<Record<ThemeToken, string>>;
 
-const ACCENTS: readonly string[] = ["violet", "ember", "cobalt", "verdigris", "gold", "rose", "steel"];
+const ACCENTS: readonly string[] = ["ember", "violet", "cobalt", "verdigris", "gold", "rose", "steel"];
 
 export interface ThemeProps extends ComponentPropsWithRef<"div"> {
   /** Color scheme. `inherit` keeps the surrounding theme's scheme (for nested themes). */
@@ -43,7 +43,7 @@ export function Theme({
     accentKind = "hue";
     vars["--forge-ui-accent-h"] = accent;
   } else if (accent && ACCENTS.includes(accent)) {
-    accentKind = accent === "violet" ? undefined : accent;
+    accentKind = accent;
   } else if (accent) {
     accentKind = "from";
     vars["--forge-ui-accent-source"] = accent;

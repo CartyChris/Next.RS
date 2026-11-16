@@ -2,7 +2,7 @@ import {
   Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   Checkbox, Container, Dialog, Grid, NotificationRegion, Select, Stack, Tabs,
   Textarea, TextInput,
-} from "@nextrs/ui";
+} from "forge:ui";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 export const meta = {

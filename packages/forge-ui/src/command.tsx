@@ -51,10 +51,60 @@ export function CommandPalette({
   open, onOpenChange, commands, label = "Command palette", placeholder = "Type a command or search…",
   empty = "No matching commands.", className,
 }: CommandPaletteProps) {
-  const id = useId();
   const dialog = useRef<HTMLDialogElement>(null);
-  const input = useRef<HTMLInputElement>(null);
   const opener = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const el = dialog.current;
+    if (!el) return;
+    if (open && !el.open) {
+      const focused = el.ownerDocument.activeElement;
+      opener.current = focused instanceof HTMLElement ? focused : null;
+      el.showModal();
+      el.querySelector("input")?.focus();
+    } else if (!open && el.open) {
+      el.close();
+      opener.current?.focus({ preventScroll: true });
+    }
+  }, [open]);
+
+  const run = (command: Command) => {
+    onOpenChange(false);
+    command.onSelect?.();
+    if (command.href) {
+      const { navigate, href } = getAdapter();
+      if (navigate) navigate(command.href);
+      else window.location.assign(href ? href(command.href) : command.href);
+    }
+  };
+
+  return (
+    <dialog ref={dialog} className={cx("forge-ui-dialog forge-ui-command", className)} aria-label={label}
+      onCancel={(event) => {
+        event.preventDefault();
+        onOpenChange(false);
+      }}
+      onClick={(event) => {
+        // A click on the backdrop lands on the dialog element itself.
+        if (event.target === event.currentTarget) onOpenChange(false);
+      }}>
+      {/* Mounted per opening, so the search always starts empty. */}
+      {open && <PaletteBody commands={commands} label={label} placeholder={placeholder} empty={empty} run={run} />}
+    </dialog>
+  );
+}
+
+interface PaletteBodyProps {
+  commands: readonly Command[];
+  label: string;
+  placeholder: string;
+  empty: ReactNode;
+  run: (command: Command) => void;
+}
+
+function PaletteBody({ commands, label, placeholder, empty, run }: PaletteBodyProps) {
+  const id = useId();
+  const list = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
@@ -70,54 +120,20 @@ export function CommandPalette({
       .sort((a, b) => (q ? b.rank - a.rank : 0) || a.order - b.order)
       .map((entry) => entry.command);
   }, [commands, query]);
+  const current = Math.min(active, Math.max(0, results.length - 1));
 
   useEffect(() => {
-    const el = dialog.current;
-    if (!el) return;
-    if (open && !el.open) {
-      const focused = el.ownerDocument.activeElement;
-      opener.current = focused instanceof HTMLElement ? focused : null;
-      setQuery("");
-      setActive(0);
-      el.showModal();
-      input.current?.focus();
-    } else if (!open && el.open) {
-      el.close();
-      opener.current?.focus({ preventScroll: true });
-    }
-  }, [open]);
-
-  useEffect(() => {
-    dialog.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
-  }, [active, results]);
-
-  const run = (command: Command | undefined) => {
-    if (!command) return;
-    onOpenChange(false);
-    command.onSelect?.();
-    if (command.href) {
-      const { navigate, href } = getAdapter();
-      if (navigate) navigate(command.href);
-      else window.location.assign(href ? href(command.href) : command.href);
-    }
-  };
+    list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [current, results]);
 
   let lastGroup: string | undefined;
   return (
-    <dialog ref={dialog} className={cx("forge-ui-dialog forge-ui-command", className)} aria-label={label}
-      onCancel={(event) => {
-        event.preventDefault();
-        onOpenChange(false);
-      }}
-      onClick={(event) => {
-        // A click on the backdrop lands on the dialog element itself.
-        if (event.target === event.currentTarget) onOpenChange(false);
-      }}>
+    <>
       <div className="forge-ui-command-search">
         <Icon name="search" size={18} />
-        <input ref={input} className="forge-ui-command-input" type="text" role="combobox" aria-expanded="true"
+        <input className="forge-ui-command-input" type="text" role="combobox" aria-expanded="true"
           aria-controls={`${id}-list`} aria-autocomplete="list" aria-label={label} placeholder={placeholder}
-          aria-activedescendant={results[active] ? `${id}-${results[active].id}` : undefined}
+          aria-activedescendant={results[current] ? `${id}-${results[current].id}` : undefined}
           autoComplete="off" spellCheck={false} value={query}
           onChange={(event) => {
             setQuery(event.currentTarget.value);
@@ -127,16 +143,16 @@ export function CommandPalette({
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
               const step = event.key === "ArrowDown" ? 1 : -1;
-              setActive((value) => results.length ? (value + step + results.length) % results.length : 0);
+              setActive(results.length ? (current + step + results.length) % results.length : 0);
             } else if (event.key === "Home" && results.length) setActive(0);
             else if (event.key === "End" && results.length) setActive(results.length - 1);
             else if (event.key === "Enter") {
               event.preventDefault();
-              run(results[active]);
+              if (results[current]) run(results[current]);
             }
           }} />
       </div>
-      <div id={`${id}-list`} className="forge-ui-command-list" role="listbox" aria-label={label}>
+      <div ref={list} id={`${id}-list`} className="forge-ui-command-list" role="listbox" aria-label={label}>
         {results.length === 0 && <div className="forge-ui-command-empty" role="presentation">{empty}</div>}
         {results.map((command, index) => {
           const heading = command.group !== lastGroup && command.group && !query.trim() ? command.group : undefined;
@@ -145,7 +161,7 @@ export function CommandPalette({
             <div key={command.id} role="presentation">
               {heading && <div className="forge-ui-command-group" role="presentation">{heading}</div>}
               <div id={`${id}-${command.id}`} className="forge-ui-command-item" role="option"
-                aria-selected={index === active} onPointerMove={() => setActive(index)} onClick={() => run(command)}>
+                aria-selected={index === current} onPointerMove={() => setActive(index)} onClick={() => run(command)}>
                 {command.icon != null && <span className="forge-ui-menu-icon" aria-hidden="true">{command.icon}</span>}
                 <span className="forge-ui-menu-label">{command.label}</span>
                 {command.hint && <span className="forge-ui-command-hint">{command.hint}</span>}
@@ -154,6 +170,6 @@ export function CommandPalette({
           );
         })}
       </div>
-    </dialog>
+    </>
   );
 }

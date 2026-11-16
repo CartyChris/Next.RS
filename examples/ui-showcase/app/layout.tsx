@@ -1,7 +1,8 @@
-import { Container, Nav, NavLink, Select, Theme } from "@nextrs/ui";
+import {
+  CommandPalette, Container, Icon, IconButton, Nav, NavLink, Select, Theme, useDisclosure, useHotkey,
+} from "forge:ui";
 import { href, usePathname } from "forge:navigation";
 import { useState, type ReactNode } from "react";
-import "@nextrs/ui/styles.css";
 import "./relay.css";
 
 type ColorTheme = "system" | "light" | "dark";
@@ -13,9 +14,15 @@ function isColorTheme(value: string): value is ColorTheme {
 export default function RootLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [theme, setTheme] = useState<ColorTheme>("system");
+  const palette = useDisclosure();
+  useHotkey("mod+k", (event) => {
+    event.preventDefault();
+    palette.toggle();
+  });
+  const title = pathname === "/guide" ? "Component guide" : pathname === "/components" ? "Component gallery" : "Overview";
 
   return (
-    <Theme theme={theme} className="relay">
+    <Theme theme={theme} accent="violet" className="relay">
       <div className="relay-shell">
         <aside className="relay-sidebar">
           <a className="relay-brand" href={href("/")} aria-label="Relay home">
@@ -31,6 +38,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               <span className="relay-nav-icon relay-nav-icon--guide" aria-hidden="true" />
               Component guide
             </NavLink>
+            <NavLink href={href("/components")} current={pathname === "/components"}>
+              <span className="relay-nav-icon relay-nav-icon--gallery" aria-hidden="true" />
+              Component gallery
+            </NavLink>
           </Nav>
           <div className="relay-sidebar-foot">
             <span className="relay-sidebar-foot-dot" aria-hidden="true" />
@@ -42,8 +53,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <Container size="wide" className="relay-topbar-inner">
               <p className="relay-breadcrumb">
                 Workspace <span aria-hidden="true">/</span>{" "}
-                <strong>{pathname === "/guide" ? "Component guide" : "Overview"}</strong>
+                <strong>{title}</strong>
               </p>
+              <IconButton label="Search commands" size="sm" className="relay-search" onClick={palette.onOpen}>
+                <Icon name="search" />
+              </IconButton>
               <Select
                 label="Color theme"
                 className="relay-theme-select"
@@ -61,6 +75,18 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {children}
         </div>
       </div>
+      <CommandPalette
+        open={palette.open}
+        onOpenChange={palette.setOpen}
+        commands={[
+          { id: "overview", label: "Overview", group: "Go to", href: "/", icon: <Icon name="home" /> },
+          { id: "guide", label: "Component guide", group: "Go to", href: "/guide", icon: <Icon name="info" /> },
+          { id: "gallery", label: "Component gallery", group: "Go to", href: "/components", icon: <Icon name="spark" /> },
+          { id: "light", label: "Use light theme", group: "Theme", icon: <Icon name="sun" />, onSelect: () => setTheme("light") },
+          { id: "dark", label: "Use dark theme", group: "Theme", icon: <Icon name="moon" />, onSelect: () => setTheme("dark") },
+          { id: "system", label: "Follow system theme", group: "Theme", icon: <Icon name="settings" />, onSelect: () => setTheme("system") },
+        ]}
+      />
     </Theme>
   );
 }

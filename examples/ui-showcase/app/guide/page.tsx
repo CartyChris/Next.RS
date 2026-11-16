@@ -1,7 +1,7 @@
 import {
   Alert, Badge, ButtonLink, Card, CardContent, CardDescription, CardHeader,
   CardTitle, Container, Grid, Stack,
-} from "@nextrs/ui";
+} from "forge:ui";
 import { href } from "forge:navigation";
 
 export const meta = {
@@ -9,8 +9,7 @@ export const meta = {
   description: "See how Relay composes Forge UI components.",
 };
 
-const example = `import { Button, Card, CardContent, Theme } from "@nextrs/ui";
-import "@nextrs/ui/styles.css";
+const example = `import { Button, Card, CardContent, Theme } from "forge:ui";
 
 export default function StatusCard() {
   return (

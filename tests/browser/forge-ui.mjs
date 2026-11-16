@@ -69,7 +69,7 @@ async function withForgeServer(check) {
 }
 
 async function withStaticServer(check) {
-  const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
+  const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml" };
   const server = createServer(async (request, response) => {
     try {
       const path = decodeURIComponent(new URL(request.url, "http://127.0.0.1").pathname);
@@ -234,6 +234,223 @@ async function checkNavigation(page, target, scope) {
   assert.equal(await overview.getAttribute("aria-current"), "page");
 }
 
+// Text and background of an element as sRGB (via a canvas, so oklch() and color-mix()
+// resolve the way they render), and their WCAG contrast ratio.
+function contrastOf(locator) {
+  return locator.evaluate((element) => {
+    const context = Object.assign(document.createElement("canvas"), { width: 1, height: 1 })
+      .getContext("2d", { willReadFrequently: true });
+    const rgb = (color) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    };
+    const luminance = (channels) => {
+      const [r, g, b] = channels.map((value) => {
+        const v = value / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const style = getComputedStyle(element);
+    const background = rgb(style.backgroundColor);
+    const [a, b] = [luminance(rgb(style.color)), luminance(background)];
+    return { ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), background: background.join(",") };
+  });
+}
+
+async function checkGallery(page, target, audit) {
+  const navigation = page.getByRole("navigation", { name: "Workspace" });
+  await navigation.getByRole("link", { name: "Component gallery" }).click();
+  await page.getByRole("heading", { level: 1, name: "Component gallery", exact: true }).waitFor();
+  assert.ok(page.url().endsWith(target === "single-html" ? "#/components" : "/components"));
+  assert.equal(await page.title(), "Component gallery · Relay");
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  assert.ok(overflow <= 1, `gallery overflows a 320px viewport by ${overflow}px`);
+
+  // Theme engine: every accent, in both schemes, keeps AA contrast on solid and soft buttons.
+  const playground = page.locator("#playground");
+  const primary = page.locator("#primary");
+  const soft = page.getByRole("button", { name: "Soft", exact: true });
+  const scheme = page.getByRole("combobox", { name: "Color theme" });
+  const accent = page.getByRole("combobox", { name: "Accent" });
+  const palettes = new Set();
+  for (const mode of ["dark", "light"]) {
+    await scheme.selectOption(mode);
+    await page.locator(`.relay[data-theme="${mode}"]`).waitFor();
+    for (const name of ["violet", "ember", "cobalt", "verdigris", "gold", "rose", "steel"]) {
+      await accent.selectOption(name);
+      await page.locator(`#playground[data-accent="${name}"]`).waitFor();
+      const solid = await contrastOf(primary);
+      const tint = await contrastOf(soft);
+      assert.ok(solid.ratio >= 4.5, `${mode} ${name}: primary button contrast is ${solid.ratio.toFixed(2)}`);
+      assert.ok(tint.ratio >= 4.5, `${mode} ${name}: soft button contrast is ${tint.ratio.toFixed(2)}`);
+      palettes.add(`${mode} ${solid.background}`);
+    }
+  }
+  assert.equal(palettes.size, 14, "each accent and scheme has its own primary color");
+  const preset = (await contrastOf(primary)).background;
+  await page.getByRole("textbox", { name: "Custom accent" }).fill("#0a7f5a");
+  await page.locator('#playground[data-accent="from"]').waitFor();
+  const custom = await contrastOf(primary);
+  assert.ok(custom.ratio >= 4.5, `custom accent contrast is ${custom.ratio.toFixed(2)}`);
+  assert.notEqual(custom.background, preset, "a custom color changes the palette");
+  const [r, g, b] = custom.background.split(",").map(Number);
+  assert.ok(g > r && g > b, `a green source gives a green accent, got rgb(${custom.background})`);
+  await page.getByRole("textbox", { name: "Custom accent" }).fill("");
+
+  const corner = () => primary.evaluate((element) => parseFloat(getComputedStyle(element).borderTopLeftRadius));
+  const height = () => primary.evaluate((element) => element.getBoundingClientRect().height);
+  await page.getByRole("radio", { name: "none", exact: true }).check();
+  assert.equal(await corner(), 0);
+  await page.getByRole("radio", { name: "full", exact: true }).check();
+  assert.ok(await corner() > 100, "radius=full rounds controls completely");
+  await page.getByRole("radio", { name: "md", exact: true }).check();
+  const comfortable = await height();
+  await page.getByRole("radio", { name: "Compact", exact: true }).check();
+  assert.ok(await height() < comfortable - 4, "compact density shrinks controls");
+  await page.getByRole("radio", { name: "Spacious", exact: true }).check();
+  assert.ok(await height() > comfortable + 4, "spacious density grows controls");
+  await page.getByRole("radio", { name: "Comfortable", exact: true }).check();
+  assert.equal(await playground.getAttribute("data-theme"), "inherit");
+
+  // Menu: arrows skip disabled items, type-ahead, Escape returns focus, Enter runs the action.
+  const menuButton = page.getByRole("button", { name: "Release", exact: true });
+  const item = (name) => page.getByRole("menuitem", { name, exact: false });
+  await menuButton.focus();
+  await page.keyboard.press("ArrowDown");
+  await focusIs(item("Rename"), "the first menu item");
+  await page.keyboard.press("ArrowDown");
+  await focusIs(item("Duplicate"), "the second menu item");
+  await page.keyboard.press("ArrowDown");
+  await focusIs(item("Delete"), "the item after the disabled one");
+  await page.keyboard.press("ArrowDown");
+  await focusIs(item("Rename"), "the first item after wrapping");
+  await page.keyboard.press("d");
+  await focusIs(item("Duplicate"), "the type-ahead match");
+  await page.keyboard.press("End");
+  await focusIs(item("Delete"), "the last item");
+  await page.keyboard.press("Escape");
+  await page.getByRole("menu").waitFor({ state: "detached" });
+  await focusIs(menuButton, "the menu button after Escape");
+  assert.equal(await menuButton.getAttribute("aria-expanded"), "false");
+  await menuButton.click();
+  await page.keyboard.press("Enter");
+  const toasts = page.getByRole("log", { name: "Gallery notifications" });
+  await toasts.getByText("Renamed", { exact: true }).waitFor();
+  await page.getByRole("menu").waitFor({ state: "detached" });
+  await menuButton.click();
+  await page.getByRole("heading", { level: 1 }).click();
+  await page.getByRole("menu").waitFor({ state: "detached" });
+
+  // Tooltip, switch, slider (which also drives the HUD meter), loading button.
+  const copy = page.getByRole("button", { name: "Copy link" });
+  await copy.focus();
+  const tooltip = page.getByRole("tooltip");
+  await tooltip.waitFor();
+  assert.equal(await copy.getAttribute("aria-describedby"), await tooltip.getAttribute("id"));
+  await page.keyboard.press("Escape");
+  await tooltip.waitFor({ state: "hidden" });
+  const live = page.getByRole("switch", { name: "Live updates" });
+  assert.equal(await live.isChecked(), true);
+  await live.focus();
+  await page.keyboard.press("Space");
+  assert.equal(await live.isChecked(), false);
+  const slider = page.getByRole("slider", { name: "Health" });
+  const meter = page.getByRole("meter", { name: "Health" });
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await slider.inputValue(), "73");
+  assert.equal(await meter.getAttribute("aria-valuenow"), "73");
+  await page.getByRole("button", { name: "Take a hit" }).click();
+  assert.equal(await meter.getAttribute("aria-valuenow"), "58", "HUD buttons receive clicks through the overlay");
+  const save = page.getByRole("button", { name: "Save changes" });
+  await save.click();
+  assert.equal(await save.getAttribute("aria-busy"), "true");
+  await toasts.getByText("Changes saved", { exact: true }).waitFor();
+  assert.equal(await save.getAttribute("aria-busy"), null);
+
+  // Table sorting (text, then numbers) and pagination.
+  const table = page.getByRole("table", { name: "Services" });
+  const firstCell = () => table.locator("tbody tr").first().locator("td").first().textContent();
+  const lastCell = () => table.locator("tbody tr").last().locator("td").first().textContent();
+  assert.equal(await firstCell(), "Gateway");
+  await table.getByRole("button", { name: "Service" }).click();
+  assert.equal(await table.getByRole("columnheader", { name: "Service" }).getAttribute("aria-sort"), "ascending");
+  assert.equal(await firstCell(), "Auth");
+  await table.getByRole("button", { name: "Service" }).click();
+  assert.equal(await table.getByRole("columnheader", { name: "Service" }).getAttribute("aria-sort"), "descending");
+  assert.equal(await firstCell(), "Search");
+  await table.getByRole("button", { name: "p95 latency" }).click();
+  assert.deepEqual([await firstCell(), await lastCell()], ["Auth", "Billing"], "numbers sort numerically");
+  assert.equal(await table.getByRole("columnheader", { name: "Service" }).getAttribute("aria-sort"), "none");
+  const pages = page.getByRole("navigation", { name: "Pagination" });
+  assert.equal(await pages.getByRole("button", { name: "Previous page" }).isDisabled(), true);
+  await pages.getByRole("button", { name: "Next page" }).click();
+  assert.equal(await pages.getByRole("button", { name: "Page 2", exact: true }).getAttribute("aria-current"), "page");
+  await page.getByText("Page 2 of 9", { exact: true }).waitFor();
+
+  // Drawer, popover and accordion.
+  const opener = page.getByRole("button", { name: "Open details" });
+  await opener.click();
+  const drawer = page.getByRole("dialog", { name: "Gateway" });
+  await drawer.waitFor();
+  await delay(250);
+  const edge = await drawer.evaluate((element) => window.innerWidth - element.getBoundingClientRect().right);
+  assert.ok(Math.abs(edge) <= 1, `the drawer sits on the right edge (off by ${edge}px)`);
+  if (audit) await assertAxe(page, "Drawer");
+  await page.keyboard.press("Escape");
+  await drawer.waitFor({ state: "hidden" });
+  await focusIs(opener, "the drawer's opener");
+  await page.getByRole("button", { name: "Filters" }).click();
+  const filterHeading = page.getByRole("heading", { name: "Filter services" });
+  await filterHeading.waitFor();
+  const box = await page.locator(".forge-ui-popover").boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= 320 && box.y >= 0, "the popover stays inside the viewport");
+  await page.keyboard.press("Escape");
+  await filterHeading.waitFor({ state: "hidden" });
+  const section = (title) => page.locator("details", { hasText: title });
+  await section("How do I theme it?").locator("summary").click();
+  assert.equal(await section("How do I theme it?").evaluate((element) => element.open), true);
+  await section("Does it work offline?").locator("summary").click();
+  assert.equal(await section("How do I theme it?").evaluate((element) => element.open), false, "accordion sections are exclusive");
+
+  // Image: space reserved, loaded, visible.
+  const image = page.getByRole("img", { name: "An anvil glowing in a dark forge" });
+  await page.locator(".forge-ui-image[data-loaded]").waitFor();
+  const shape = await image.evaluate((element) => {
+    const frame = element.parentElement.getBoundingClientRect();
+    return { natural: element.naturalWidth, ratio: frame.width / frame.height, opacity: getComputedStyle(element).opacity };
+  });
+  assert.ok(shape.natural > 0 && Math.abs(shape.ratio - 640 / 360) < 0.02, JSON.stringify(shape));
+
+  if (audit) await assertAxe(page, "Component gallery");
+
+  // Command palette: hotkey, filter, Enter navigates through the router.
+  await page.keyboard.press("Control+k");
+  const search = page.getByRole("combobox", { name: "Command palette" });
+  await search.waitFor();
+  await focusIs(search, "the palette's search field");
+  const options = page.getByRole("listbox", { name: "Command palette" }).getByRole("option");
+  assert.equal(await options.count(), 6);
+  if (audit) await assertAxe(page, "Command palette");
+  await page.keyboard.type("guide");
+  assert.equal(await options.count(), 1, "typing filters the commands");
+  assert.equal(await options.first().textContent(), "Component guide");
+  assert.equal(await options.first().getAttribute("aria-selected"), "true");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await page.getByRole("heading", { level: 1, name: "Component guide", exact: true }).waitFor();
+  assert.ok(page.url().endsWith(target === "single-html" ? "#/guide" : "/guide"));
+  await search.waitFor({ state: "hidden" });
+  await page.keyboard.press("Control+k");
+  await search.waitFor();
+  await page.keyboard.type("dark");
+  await page.keyboard.press("Enter");
+  await page.locator('.relay[data-theme="dark"]').waitFor();
+}
+
 async function checkTarget(browser, target, url) {
   await noJavaScript(browser, url, "light");
   await noJavaScript(browser, url, "dark");
@@ -283,10 +500,11 @@ async function checkTarget(browser, target, url) {
     await theme.selectOption("light");
     await page.locator('.forge-ui[data-theme="light"]').waitFor();
     assert.equal(await scope.evaluate((element) => getComputedStyle(element).colorScheme), "light");
+    await checkGallery(page, target, offline);
 
     assert.deepEqual(errors, [], `${target} emitted page or hydration errors`);
     assert.deepEqual(network, [], `${target} requested network assets`);
-    console.log(`${engine} ${target}: pre-JavaScript content, theme, reflow, tabs, dialog, form, and navigation passed${offline ? "; no network requests" : ""}.`);
+    console.log(`${engine} ${target}: pre-JavaScript content, theme, reflow, tabs, dialog, form, and navigation, and the component gallery passed${offline ? "; no network requests" : ""}.`);
   } finally {
     await context.close();
   }

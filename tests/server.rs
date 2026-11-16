@@ -345,3 +345,82 @@ async fn text_encoder_encode_into_writes_whole_characters() {
     );
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn server_intl_matches_browser_en_us() {
+    // The engine has no ICU; these are the strings V8 prints for en-US.
+    let root = project(
+        "intl",
+        &[
+            ("app/page.js", "export const render = () => '';"),
+            (
+                "app/api/fmt/route.js",
+                r#"export function GET() {
+  const d = new Date(Date.UTC(2026, 10, 16, 15, 4, 5));
+  const utc = { timeZone: "UTC" };
+  return [
+    (1234567.891).toLocaleString(), (18240).toLocaleString("en-US"), (0.5).toLocaleString(),
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(1234.5),
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "JPY" }).format(1234.5),
+    new Intl.NumberFormat("en-US", { style: "percent" }).format(0.256),
+    new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 }).format(0.2567),
+    new Intl.NumberFormat("en-US", { notation: "compact" }).format(1234),
+    new Intl.NumberFormat("en-US", { notation: "compact" }).format(15300000),
+    new Intl.NumberFormat("en-US", { minimumFractionDigits: 2 }).format(3),
+    new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(-2.5e3),
+    new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(12),
+    d.toLocaleDateString("en-US", utc),
+    d.toLocaleDateString("en-US", { ...utc, month: "short", day: "numeric", year: "numeric" }),
+    d.toLocaleDateString("en-US", { ...utc, weekday: "long", month: "long", day: "numeric" }),
+    d.toLocaleTimeString("en-US", utc),
+    d.toLocaleTimeString("en-US", { ...utc, hour: "numeric", minute: "2-digit" }),
+    d.toLocaleString("en-US", utc),
+    new Intl.DateTimeFormat("en-US", { ...utc, dateStyle: "medium" }).format(d),
+    new Intl.DateTimeFormat("en-US", { ...utc, month: "long", year: "numeric" }).format(d),
+    new Intl.PluralRules("en-US").select(1), new Intl.PluralRules("en-US", { type: "ordinal" }).select(22),
+    new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-1, "day"),
+    new Intl.RelativeTimeFormat("en").format(3, "hour"),
+    new Intl.ListFormat("en").format(["a", "b", "c"]),
+    new Intl.NumberFormat("en-US", { notation: "compact" }).format(999999),
+    new Intl.NumberFormat("en-US", { notation: "compact" }).format(123456),
+    new Intl.NumberFormat("en-US", { style: "unit", unit: "kilobyte" }).format(12),
+  ];
+}"#,
+            ),
+        ],
+    );
+    let app = serve(&root).await;
+    let got: Vec<String> = serde_json::from_str(&get(&app, "/api/fmt").await.body).unwrap();
+    let want = [
+        "1,234,567.891",
+        "18,240",
+        "0.5",
+        "$1,234.50",
+        "¥1,235",
+        "26%",
+        "25.7%",
+        "1.2K",
+        "15M",
+        "3.00",
+        "-2,500",
+        "+12",
+        "11/16/2026",
+        "Nov 16, 2026",
+        "Monday, November 16",
+        "3:04:05 PM",
+        "3:04 PM",
+        "11/16/2026, 3:04:05 PM",
+        "Nov 16, 2026",
+        "November 2026",
+        "one",
+        "two",
+        "yesterday",
+        "in 3 hours",
+        "a, b, and c",
+        "1M",
+        "123K",
+        "12 kB",
+    ];
+    assert_eq!(got, want);
+    std::fs::remove_dir_all(root).ok();
+}

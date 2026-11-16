@@ -163,9 +163,12 @@ body {
 }
 
 .relay-breadcrumb {
+  flex: 1 1 0;
+  min-width: 0;
   margin: 0;
   color: var(--forge-ui-muted);
   font-size: 0.875rem;
+  overflow-wrap: anywhere;
 }
 
 .relay-breadcrumb span {
@@ -607,4 +610,25 @@ body {
   .relay-activity li {
     grid-template-columns: minmax(0, 6rem) minmax(0, 1fr);
   }
+}
+
+/* Component gallery */
+.relay-nav-icon--gallery::after {
+  position: absolute;
+  content: "";
+  inset: 22%;
+  border: 1px solid currentColor;
+  rotate: 45deg;
+}
+
+.relay .relay-search { flex-shrink: 0; }
+
+.relay-stage {
+  position: relative;
+  min-height: 15rem;
+  border-radius: var(--forge-ui-radius-panel);
+  background:
+    radial-gradient(60% 80% at 50% 110%, rgb(255 154 77 / 55%), transparent 70%),
+    linear-gradient(180deg, #17122a, #2c1a38);
+  overflow: hidden;
 }

@@ -30,7 +30,8 @@ enum Command {
     /// Create a new project.
     New {
         dir: PathBuf,
-        /// react (TSX), jsx, vanilla, three (three.js game), ai (streaming chat), arena (multiplayer + neural bots)
+        /// starter (app shell on forge:ui), react (TSX), jsx, vanilla, three (three.js game), ai (streaming chat),
+        /// pixel (self-saving single file), arena (multiplayer + neural bots)
         #[arg(long, short, default_value = "react")]
         template: String,
     },

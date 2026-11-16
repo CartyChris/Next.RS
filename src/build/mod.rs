@@ -234,8 +234,18 @@ fn spec(project: &Project, input: (&str, &Path), side: Side) -> BundleSpec {
 }
 
 /// Routes, analysis and the security scan, without writing build output.
+/// `.forge/types/`: declarations for the `forge:*` modules, for editors and `tsc`.
+pub fn write_types(project: &Project) -> Result<()> {
+    let dir = project.out_dir().join("types");
+    std::fs::create_dir_all(&dir)?;
+    generated::write_if_changed(&dir.join("forge.d.ts"), TYPES_DTS)?;
+    generated::write_if_changed(&dir.join("forge-ui.d.ts"), generated::UI_DTS)?;
+    Ok(())
+}
+
 pub async fn check(project: &Project) -> Result<(Plan, Vec<String>)> {
     let plan = plan(project)?;
+    write_types(project)?;
     let generated = generated::emit(&EmitInput {
         root: &project.root,
         dir: &project.generated_dir(),
@@ -257,9 +267,7 @@ pub async fn build(project: &Project) -> Result<BuildResult> {
     let plan = plan(project)?;
     let out_dir = project.out_dir();
     let gen_dir = project.generated_dir();
-    std::fs::create_dir_all(out_dir.join("types"))?;
-    generated::write_if_changed(&out_dir.join("types/forge.d.ts"), TYPES_DTS)?;
-    generated::write_if_changed(&out_dir.join("types/forge-ui.d.ts"), generated::UI_DTS)?;
+    write_types(project)?;
 
     let emit = |static_data: Option<&str>| {
         generated::emit(&EmitInput {

@@ -40,6 +40,12 @@ pub const TEMPLATES: &[(&str, &str, Files)] = &[
         files!("ai-chat": "package.json", "forge.config.json", "tsconfig.json", "app/chat.css", "app/page.tsx", "app/api/chat/route.ts"),
     ),
     (
+        "starter",
+        "app starter on forge:ui: sidebar shell, theme, data table, settings form, command palette, API route",
+        files!("starter": "package.json", "forge.config.json", "tsconfig.json", "app/starter.css", "app/layout.tsx", "app/page.tsx", "app/loader.ts",
+            "app/_data.ts", "app/settings/page.tsx", "app/api/projects/route.ts"),
+    ),
+    (
         "pixel",
         "pixel-art editor in one HTML file that saves itself (forge:file: save-self, drop, export)",
         files!("pixel": "package.json", "forge.config.json", "app/pixel.css", "app/page.tsx"),
