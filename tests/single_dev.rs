@@ -115,3 +115,39 @@ async fn pack_watch_repacks_on_change_without_looping() {
     );
     std::fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_watch_ignores_configured_output_directories_after_reconfiguration() {
+    let root = project(
+        "custom-output-watch",
+        &[
+            ("app/page.js", "export const render = () => '<h1>custom</h1>';"),
+            ("build/keep.txt", "source sibling of the configured outputs"),
+            ("forge.config.json", r#"{"outDir":"build/cache","distDir":"build/site"}"#),
+        ],
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(nextrs::server::single::run_project_on(root.clone(), listener));
+    until(&base, "custom output", |s, b| s == 200 && b.contains("<h1>custom</h1>")).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    std::fs::write(
+        root.join("forge.config.json"),
+        r#"{"outDir":"build/cache2","distDir":"build/site2","title":"Changed output"}"#,
+    )
+    .unwrap();
+    until(&base, "reconfigured output", |s, b| s == 200 && b.contains("Changed output")).await;
+    let output = root.join("build/site2/index.html");
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let settled = std::fs::metadata(&output).unwrap().modified().unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(
+        std::fs::metadata(&output).unwrap().modified().unwrap(),
+        settled,
+        "build output triggered another build"
+    );
+    std::fs::write(root.join("app/page.js"), "export const render = () => '<h1>edited</h1>'; ").unwrap();
+    until(&base, "source edit after reconfiguration", |s, b| s == 200 && b.contains("<h1>edited</h1>")).await;
+    task.abort();
+    std::fs::remove_dir_all(root).ok();
+}

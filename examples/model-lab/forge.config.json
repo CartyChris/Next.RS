@@ -1,0 +1,8 @@
+{
+  "title": "Model Lab · Next.RS",
+  "build": {
+    "wasm": [
+      { "name": "mesh", "manifestPath": "rust/mesh/Cargo.toml" }
+    ]
+  }
+}

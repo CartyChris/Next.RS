@@ -37,7 +37,7 @@ my-app/
   dist/                static and single-html output (generated)
 ```
 
-Run `forge new my-app --template <starter|react|jsx|vanilla|three|pixel|ai|arena>` to start from a working example. `starter` is an application shell built on `forge:ui`. Every new project also gets an `AGENTS.md` (the [agent guide](AGENT_GUIDE.md)) and a `.mcp.json` that registers `forge mcp`, so a coding agent that opens the project knows the framework.
+Run `forge new my-app --template <starter|react|jsx|vanilla|three|models|pixel|ai|arena>` to start from a working example. `starter` is an application shell built on `forge:ui`; `models` is a Rust/WASM procedural model editor. Every new project also gets an `AGENTS.md` (the [agent guide](AGENT_GUIDE.md)) and a `.mcp.json` that registers `forge mcp`, so a coding agent that opens the project knows the framework.
 
 ## Routing
 
@@ -228,6 +228,15 @@ const model = await fetch(new URL("./models/net.onnx", import.meta.url));
 - Anything else becomes a hashed asset (models, `.wasm`, data files).
 - In single-html builds workers are inlined as Blob URLs and assets as data URLs. Module workers cannot start from Blob URLs on `file://`, so Forge bundles inline workers as classic scripts and adapts `{ type: "module" }` for you. The Arena example trains neural networks this way, offline.
 
+For Rust source, declare `build.wasm` entries such as
+`{ "name": "mesh", "manifestPath": "rust/mesh/Cargo.toml" }`. Forge compiles the
+locked `cdylib` for `wasm32-unknown-unknown` before bundling. Import its URL from
+`forge:wasm/mesh`; `forge:mesh` loads the example's versioned procedural mesh ABI
+and returns owned typed arrays for Three.js or another renderer. The `models`
+template includes the real Rust source, WebGPU/WebGL2 rendering and GLB export.
+See [Rust models and mobile 3D](MODELS.md), also available as
+`forge docs --read models`. This browser feature is separate from `wasm-host`.
+
 ## AI: chat, tools and agents
 
 `forge:ai` speaks four wire protocols behind one interface, in the browser and in server routes:
@@ -415,6 +424,7 @@ Single-html details:
 - `forge dev --target single-html` develops against the real artifact: every save rebuilds the single file (uncompressed, unminified), `/` serves it with live reload, and build errors show in the page. Hash routing, embedded loader data and inlined assets behave exactly as in the shipped file.
 - The `/` route is prerendered into the file, so content shows before the script runs.
 - The script is compressed automatically once it is over 16 kB (`"build": { "compress": "auto" }`, the default; `true` / `false` force it). It is deflated and stored as base-122 text (7 bits per byte, against base64's 6), then inflated with `DecompressionStream` and imported as the same ES module. The examples' files come out 64–71% smaller: React 235 → 85 kB, three.js game 504 → 145 kB, Forge Arena 802 → 257 kB.
+- Compression requires the browser's Compression Streams API; Safari added it in 16.4. Use `build.compress: false` when targeting a browser without that API. Graphics, WASM and other application APIs still need their own compatibility checks; see [the browser guidance](MODELS.md#ios-and-verification-limits).
 - `public/` is not included; import assets from code so they are inlined.
 - Dynamic `import()` of app code is not allowed (everything is one script).
 - `import.meta.env.TARGET` is `"single-html"` (or `"server"` / `"static"`), a build-time constant.
@@ -494,12 +504,14 @@ Not handled yet: workers created from separate files, `text/babel` with `data-ty
 | `forge:ai` | `chat()`, `runAgent()` ([above](#ai-chat-tools-and-agents)); `streamText(url, init)`, `sse(response)`, `sseResponse(asyncIterable)`, `useStream()` |
 | `forge:realtime` | browser: `connect(path, handlers)`, `useSocket(path, onMessage)`; server: `publish(topic, msg)`, `subscribers(topic)` |
 | `forge:file` | `openFile`, `openFiles`, `saveFile`, `onDrop`, `useDrop`; self-saving single files: `useDocument`, `saveSelf`, `embeddedState`, `selfHtml`, `fileName` ([above](#self-saving-single-files)) |
-| `forge:game` | `loop({ update, render, step })` fixed-timestep loop, `input()` keyboard/pointer state, `fit(canvas, onResize)` DPR-aware sizing |
+| `forge:game` | Fixed-step `loop`, multipointer `input`, DPR-aware `fit`, `joystick`, `actionButton`, `gamepad`, `adaptiveQuality`, async `createRenderer` fallback ([models guide](MODELS.md)) |
+| `forge:mesh` | `loadMeshGenerator`, `validateMesh`; Rust mesh ABI validation and copied typed arrays |
+| `forge:wasm/<name>` | Default-exported URL for a configured Rust library; hashed asset or embedded data URL |
 | `forge:ui` | components, `Theme`, looks, hooks ([above](#interface-forgeui), [FORGE_UI.md](FORGE_UI.md)) |
 | `forge:n8n` | `trigger(url, data, options)`, `webhook(handler, options)`, `WorkflowError` ([above](#automation-n8n-and-webhooks)) |
 | `forge:test` | `test`, `describe`, `expect`, `beforeEach`, `afterEach` for `forge test` ([above](#scripts-and-tests)) |
 
-Types are written to `.forge/types/` (`forge.d.ts` and `forge-ui.d.ts`) on every build and on `forge check`; include `.forge/types` in `tsconfig.json`.
+Types are written to `.forge/types/` (`forge.d.ts`, `forge-ui.d.ts` and configured aliases in `forge-wasm.d.ts`) on every build and on `forge check`; include `.forge/types` in `tsconfig.json`.
 
 ## Assets and CSS
 
@@ -543,7 +555,8 @@ Types are written to `.forge/types/` (`forge.d.ts` and `forge-ui.d.ts`) on every
     "minify": true,
     "sourcemap": false,
     "compress": "auto",
-    "define": { "__VERSION__": "\"1.0.0\"" }
+    "define": { "__VERSION__": "\"1.0.0\"" },
+    "wasm": []
   }
 }
 ```
@@ -552,6 +565,7 @@ Types are written to `.forge/types/` (`forge.d.ts` and `forge-ui.d.ts`) on every
 - `server.accessLog: true` prints one line per request in production (`forge dev` always does). Every response carries a `Server-Timing` header, so devtools show server time.
 - `security.csp`: `true` (default policy), `false` (no header), or a string (your policy; `{nonce}` is replaced per response).
 - Compile-time constants: `process.env.NODE_ENV`, `import.meta.env.MODE/DEV/PROD/SSR`, plus `build.define`.
+- `build.wasm` is opt-in; each entry requires a unique lowercase `name` and a project-relative `manifestPath`. Optional `features: []` and `defaultFeatures: true` are passed to Cargo. Install Rust and the `wasm32-unknown-unknown` target, and commit the crate's `Cargo.lock`. Full configuration and ABI details are in [MODELS.md](MODELS.md).
 
 ## Security model
 
@@ -559,6 +573,7 @@ Build time (every app module, with positions):
 - `eval`, indirect `eval`, `globalThis.eval`, `new Function` and `Function(...)` are rejected unless `security.allowEval`.
 - Imports of Forge internals (`ext:*`, `forge:internal*`, `.forge/generated`) and remote imports (`http:`, `https:`, `data:`, `blob:`) are rejected. Node built-ins are rejected in browser code.
 - Strings and comments never trigger the scanner (it walks the AST).
+- Configured Rust crates compile with Cargo's normal host permissions. Build scripts/procedural macros are trusted build inputs; they do not run in the QuickJS server sandbox. Rust compiler failures abort the build instead of reusing stale WASM.
 
 Runtime:
 - Server code sees only the env variables listed in `server.env`.

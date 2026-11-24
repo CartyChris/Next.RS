@@ -31,7 +31,7 @@ enum Command {
     New {
         dir: PathBuf,
         /// starter (app shell on forge:ui), react (TSX), jsx, vanilla, three (three.js game), ai (streaming chat),
-        /// pixel (self-saving single file), arena (multiplayer + neural bots)
+        /// pixel (self-saving single file), arena (multiplayer + neural bots), models (Rust/WASM 3D models)
         #[arg(long, short, default_value = "react")]
         template: String,
     },
@@ -67,7 +67,7 @@ enum Command {
         #[arg(long)]
         host: Option<String>,
     },
-    /// Validate routes and run the security scan without writing a build.
+    /// Validate routes, compile configured Rust/WASM and scan both bundles without deployable output.
     Check {
         #[arg(default_value = ".")]
         root: PathBuf,
@@ -210,6 +210,11 @@ async fn run(cli: Cli) -> Result<()> {
             println!("Created {} ({template}).\n\n  cd {}\n  npm install\n  forge dev\n", dir.display(), dir.display());
             if template == "vanilla" {
                 println!("(The vanilla template has no npm dependencies; `npm install` is optional.)");
+            }
+            if template == "models" {
+                println!(
+                    "Rust models require Cargo and `rustup target add wasm32-unknown-unknown`. Use `npm ci` for the locked example dependencies."
+                );
             }
         }
         Command::Dev { root, port, host, target } => {

@@ -35,6 +35,13 @@ pub const TEMPLATES: &[(&str, &str, Files)] = &[
         files!("three-game": "package.json", "forge.config.json", "app/game.css", "app/orb.frag", "app/orb.vert", "app/page.js"),
     ),
     (
+        "models",
+        "Rust/WASM procedural 3D models, WebGPU/WebGL2 viewer, GLB export, offline single HTML",
+        files!("model-lab": "README.md", "package.json", "package-lock.json", "forge.config.json", "tsconfig.json",
+            "app/layout.tsx", "app/page.tsx", "app/model-lab.css", "app/_model/view.ts", "app/_model/glb.ts",
+            "rust/mesh/Cargo.toml", "rust/mesh/Cargo.lock", "rust/mesh/src/lib.rs", "rust/mesh/.gitignore"),
+    ),
+    (
         "ai",
         "streaming AI chat: OpenAI-compatible proxy (or offline echo) + React UI",
         files!("ai-chat": "package.json", "forge.config.json", "tsconfig.json", "app/chat.css", "app/page.tsx", "app/api/chat/route.ts"),
@@ -60,7 +67,7 @@ pub const TEMPLATES: &[(&str, &str, Files)] = &[
     ),
 ];
 
-const GITIGNORE: &str = "node_modules\n.forge\ndist\n.env\n";
+const GITIGNORE: &str = "node_modules\n.forge\ndist\ntarget\n.env\n";
 
 /// Written to every new project as `AGENTS.md`, so a coding agent that opens the project
 /// knows the framework without searching for it.

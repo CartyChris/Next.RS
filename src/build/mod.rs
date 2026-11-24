@@ -12,6 +12,7 @@ pub mod generated;
 pub mod html;
 pub mod manifest;
 pub mod script;
+pub mod wasm;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -203,12 +204,14 @@ fn defines(project: &Project, server: bool) -> Vec<(String, String)> {
     out
 }
 
-fn aliases(gen_dir: &Path, side: Side) -> Vec<(String, PathBuf)> {
+fn aliases(project: &Project, side: Side) -> Vec<(String, PathBuf)> {
+    let gen_dir = project.generated_dir();
     VIRTUAL_MODULES
         .iter()
         .map(|(spec, server, client)| {
             (spec.to_string(), gen_dir.join("runtime").join(if side == Side::Server { server } else { client }))
         })
+        .chain(wasm::aliases(project))
         .collect()
 }
 
@@ -224,7 +227,7 @@ fn spec(project: &Project, input: (&str, &Path), side: Side) -> BundleSpec {
         split: client && project.target != Target::SingleHtml,
         inline_assets: project.target == Target::SingleHtml,
         define: defines(project, !client),
-        aliases: aliases(&gen_dir, side),
+        aliases: aliases(project, side),
         // Both builds scan: client-only pages are never imported by the server bundle.
         scan: Some(Policy { allow_eval: project.config.security.allow_eval }),
         generated_dir: gen_dir,
@@ -234,18 +237,26 @@ fn spec(project: &Project, input: (&str, &Path), side: Side) -> BundleSpec {
     }
 }
 
-/// Routes, analysis and the security scan, without writing build output.
 /// `.forge/types/`: declarations for the `forge:*` modules, for editors and `tsc`.
 pub fn write_types(project: &Project) -> Result<()> {
     let dir = project.out_dir().join("types");
     std::fs::create_dir_all(&dir)?;
     generated::write_if_changed(&dir.join("forge.d.ts"), TYPES_DTS)?;
     generated::write_if_changed(&dir.join("forge-ui.d.ts"), generated::UI_DTS)?;
+    let mut wasm_types = String::from("// Generated from build.wasm in forge.config.json.\n");
+    for module in &project.config.build.wasm {
+        let specifier = serde_json::to_string(&format!("forge:wasm/{}", module.name))?;
+        wasm_types.push_str(&format!("declare module {specifier} {{ const url: string; export default url; }}\n"));
+    }
+    generated::write_if_changed(&dir.join("forge-wasm.d.ts"), &wasm_types)?;
     Ok(())
 }
 
+/// Analyze and bundle both sides without writing deployable output. Configured
+/// Rust modules are compiled so their imports are checked against real artifacts.
 pub async fn check(project: &Project) -> Result<(Plan, Vec<String>)> {
     let plan = plan(project)?;
+    wasm::compile(project).await?;
     write_types(project)?;
     let generated = generated::emit(&EmitInput {
         root: &project.root,
@@ -274,6 +285,7 @@ pub async fn build(project: &Project) -> Result<BuildResult> {
         bail!("the wasm-host target is planned but not implemented yet (see docs/ROADMAP.md)");
     }
     let plan = plan(project)?;
+    wasm::compile(project).await?;
     let out_dir = project.out_dir();
     let gen_dir = project.generated_dir();
     write_types(project)?;
@@ -299,7 +311,10 @@ pub async fn build(project: &Project) -> Result<BuildResult> {
             project.target
         ));
     }
-    let build_id = bundle::content_hash(server_code.as_bytes());
+    let mut build_hash = blake3::Hasher::new();
+    hash_field(&mut build_hash, server_code.as_bytes());
+    hash_field(&mut build_hash, &serde_json::to_vec(&project.config)?);
+    let build_id = build_hash.finalize().to_hex().to_string();
 
     let mut result = match project.target {
         Target::Server => build_server(project, &plan, &generated, &server, server_code.clone(), &build_id).await?,
@@ -312,6 +327,35 @@ pub async fn build(project: &Project) -> Result<BuildResult> {
     std::fs::write(out_dir.join("bundle-stats.json"), serde_json::to_vec_pretty(&result.stats)?)?;
     result.elapsed = started.elapsed();
     Ok(result)
+}
+
+fn hash_field(hash: &mut blake3::Hasher, bytes: &[u8]) {
+    hash.update(&(bytes.len() as u64).to_le_bytes());
+    hash.update(bytes);
+}
+
+/// A server-only hash misses client-only pages, CSS, workers and WASM. Include
+/// their actual output bytes, in a stable order, before publishing the manifest.
+fn client_build_id(server_id: &str, client: &Bundle) -> String {
+    let mut hash = blake3::Hasher::new();
+    hash_field(&mut hash, server_id.as_bytes());
+    let mut chunks: Vec<_> = client.chunks.iter().collect();
+    chunks.sort_by(|a, b| a.file.cmp(&b.file));
+    for chunk in chunks {
+        hash_field(&mut hash, chunk.file.as_bytes());
+        hash_field(&mut hash, chunk.code.as_bytes());
+        if let Some(map) = &chunk.map {
+            hash_field(&mut hash, map.as_bytes());
+        }
+    }
+    hash_field(&mut hash, client.css.as_bytes());
+    let mut files: Vec<_> = client.files.iter().collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, bytes) in files {
+        hash_field(&mut hash, name.as_bytes());
+        hash_field(&mut hash, bytes);
+    }
+    hash.finalize().to_hex()[..16].to_string()
 }
 
 fn manifest(project: &Project, plan: &Plan, build_id: &str, client: ClientAssets) -> Manifest {
@@ -403,6 +447,8 @@ async fn build_server(
         bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?,
         server,
     );
+    let build_id = client_build_id(build_id, &client);
+    let build_id = build_id.as_str();
     let (assets, client_files) = write_client(&out_dir.join("client"), &client, generated)?;
     std::fs::create_dir_all(out_dir.join("server"))?;
     std::fs::write(out_dir.join("server/server.js"), server_code.as_bytes())?;
@@ -582,6 +628,8 @@ async fn build_static(
         bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?,
         server,
     );
+    let build_id = client_build_id(build_id, &client);
+    let build_id = build_id.as_str();
     let (assets, client_files) = write_client(&dist.join("_forge/static"), &client, generated)?;
     let manifest = manifest(project, plan, build_id, assets);
     let mut artifacts: Vec<(PathBuf, u64)> = Vec::new();
@@ -730,6 +778,8 @@ async fn build_single(
     let static_data = Value::Object(data).to_string();
     let generated = emit(Some(&static_data))?;
     let client = bundle::bundle(spec(project, ("client", &generated.client_entry), Side::Client)).await?;
+    let build_id = client_build_id(build_id, &client);
+    let build_id = build_id.as_str();
     let js = &client.entry("client").context("client bundle has no entry chunk")?.code;
     if client.chunks.len() > 1 {
         bail!(

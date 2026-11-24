@@ -57,6 +57,7 @@ fn import_path(path: &Path) -> String {
 
 /// Bundle `entry` (generated code) and run its dispatch once.
 async fn execute(project: &Project, entry: String) -> Result<Outcome> {
+    super::wasm::compile(project).await?;
     let dir = project.generated_dir();
     generated::write_runtime(&dir)?;
     super::write_types(project)?;

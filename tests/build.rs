@@ -6,6 +6,38 @@ use common::*;
 use nextrs::config::Target;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn build_id_tracks_browser_only_changes_and_configuration() {
+    let root = project(
+        "client-build-id",
+        &[
+            ("app/page.js", "import './style.css'; export function mount(el) { el.textContent = 'first'; }"),
+            ("app/style.css", "body { color: red; }"),
+        ],
+    );
+    let first = build(&root, Target::Server).await.unwrap();
+    let identical = build(&root, Target::Server).await.unwrap();
+    assert_eq!(first.manifest.build_id, identical.manifest.build_id, "identical builds must be stable");
+    std::fs::write(
+        root.join("app/page.js"),
+        "import './style.css'; export function mount(el) { el.textContent = 'second'; }",
+    )
+    .unwrap();
+    let changed = build(&root, Target::Server).await.unwrap();
+    assert_eq!(first.server_code, changed.server_code, "fixture must isolate a browser-only change");
+    assert_ne!(first.manifest.build_id, changed.manifest.build_id, "browser code must trigger live reload");
+    std::fs::write(root.join("app/style.css"), "body { color: blue; }").unwrap();
+    let css = build(&root, Target::Server).await.unwrap();
+    assert_ne!(changed.manifest.build_id, css.manifest.build_id, "CSS must trigger live reload");
+    std::fs::write(root.join("forge.config.json"), r#"{"title":"Updated title"}"#).unwrap();
+    let config = build(&root, Target::Server).await.unwrap();
+    assert_ne!(css.manifest.build_id, config.manifest.build_id, "document settings must trigger live reload");
+    let capsule: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join(".forge/capsule.json")).unwrap()).unwrap();
+    assert_eq!(capsule["buildId"], config.manifest.build_id);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn server_build_writes_the_expected_layout() {
     let root = example("vanilla");
     let result = build(&root, Target::Server).await.unwrap();

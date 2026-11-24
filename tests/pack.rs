@@ -343,10 +343,17 @@ async fn private_networks_are_not_fetched_by_default() {
         "{:?}",
         summary.warnings
     );
-    // Allowed explicitly, the same page embeds the script.
-    let summary =
-        pack::run(&dir.join("index.html"), Some(&dir.join("open.html")), options(&base, &cache)).await.unwrap();
+    // Exercise the opt-in only against our own local fixture. Reusing the page
+    // above would make a real request to the metadata service during this test.
+    let allowed = dir.join("allowed.html");
+    std::fs::write(
+        &allowed,
+        format!(r#"<html><body><script src="{base}/web/lib.js"></script><p>ok</p></body></html>"#),
+    )
+    .unwrap();
+    let summary = pack::run(&allowed, Some(&dir.join("open.html")), options(&base, &cache)).await.unwrap();
     assert!(std::fs::read_to_string(summary.output).unwrap().contains("remote-lib"));
+    assert!(summary.warnings.is_empty(), "{:?}", summary.warnings);
     server.abort();
     std::fs::remove_dir_all(&dir).ok();
 }

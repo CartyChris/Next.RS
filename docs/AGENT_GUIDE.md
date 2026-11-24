@@ -13,13 +13,13 @@ forge test                            # *.test.ts files, in the same engine as s
 forge build                           # or --target static | single-html
 ```
 
-Templates: `starter` (app shell on `forge:ui`; the default choice for applications), `react`, `jsx`, `vanilla`, `three` (3D game), `pixel` (self-saving single file), `ai` (chat), `arena` (multiplayer). `forge new --help` lists them.
+Templates: `starter` (app shell on `forge:ui`; the default choice for applications), `react`, `jsx`, `vanilla`, `three` (3D game), `models` (Rust/WASM procedural 3D editor), `pixel` (self-saving single file), `ai` (chat), `arena` (multiplayer). `models` requires Cargo and `rustup target add wasm32-unknown-unknown`; use `npm ci` for its locked dependencies. `forge new --help` lists them.
 
 Find things instead of guessing:
 
 ```bash
 forge docs loader redirect            # search every document
-forge docs --read design              # print one: agents, guide, ui, design, architecture
+forge docs --read design              # print one: agents, guide, ui, design, architecture, models
 forge themes frosted glass            # find a look for the interface from a description
 ```
 
@@ -100,7 +100,9 @@ Import these; do not install replacements.
 | `forge:ai` | `chat()` and a tool-calling `runAgent()` for OpenAI-compatible, Anthropic, Gemini and Ollama APIs |
 | `forge:n8n` | `trigger(url, data)` calls an n8n workflow; `webhook(handler, { secret })` receives calls from one |
 | `forge:file` | open, save and drop files; single HTML files that save themselves (`useDocument`) |
-| `forge:game` | `loop({ update, render })` fixed-step loop, `input()`, `fit(canvas)` |
+| `forge:game` | `loop`, `input`, `fit`; independent `joystick`/`actionButton`, `gamepad`, `adaptiveQuality`, async `createRenderer` fallback |
+| `forge:mesh` | Load/validate the Rust mesh ABI and return copied positions, normals, UVs, indices and bounds |
+| `forge:wasm/<name>` | URL of an automatically compiled `build.wasm` library; embedded in single-HTML output |
 | `forge:test` | `test`, `describe`, `expect` for `forge test` |
 
 ## Interface
@@ -125,6 +127,16 @@ Loaders run per request on the server target and at build time on the other two.
 
 Start from `three` (3D) or `vanilla` (2D canvas). Make the page client-only (`export const ssr = false`) when it touches WebGL at module scope. Run the simulation in `loop()` from `forge:game` with a fixed step, read `input()`, size the canvas with `fit()`. Put interface over the canvas in `Hud` and `HudSlot` from `forge:ui`; menus are `Dialog`s. Save progress with `usePersistentState`. Multiplayer is a `socket` export in a `route.ts`: every connection to one path shares a worker, so module state is the room state.
 
+For Rust-generated models, start from `models` and read `forge docs --read models`.
+Declare the Cargo manifest in `build.wasm`, import `forge:wasm/<name>`, and use
+`loadMeshGenerator` from `forge:mesh`. Rust generates mesh data; Three.js renders
+it. Use compatible materials for WebGPU fallback; existing GLSL/EffectComposer
+games need their WebGL renderer. On mobile, give joystick and action controls
+independent pointers, poll `gamepad`, and feed rendered-frame times into
+`adaptiveQuality`. Dispose input, geometry and renderers on unmount. Verify the
+actual single HTML with network blocked in Chromium and WebKit; report physical
+device and hardware-WebGPU testing separately.
+
 ## Pitfalls
 
 - **Server code is not Node.** There is no `fs`, `process` or `Buffer`. Use `fetch`, and read secrets from `ctx.env` after listing them in `server.env` in `forge.config.json`. Outbound hosts must be listed in `server.allowFetch`.
@@ -135,6 +147,7 @@ Start from `three` (3D) or `vanilla` (2D canvas). Make the page client-only (`ex
 - **Loader data is JSON.** Convert dates and maps before returning them.
 - **Single-file builds have no server**: no API routes, no `public/` folder. Import assets from code so they are inlined.
 - **Types come from `.forge/types`.** Keep `"include": ["app", ".forge/types"]` in `tsconfig.json` and run `forge check` once before `tsc`.
+- **Rust compilation is explicit.** Configured `build.wasm` crates run through Cargo with locked dependencies and normal host build permissions, including during `forge check` and `forge test`. Browser WASM does not run in the QuickJS server engine; the separate `wasm-host` target remains planned.
 
 ## For agents with MCP
 

@@ -1,6 +1,6 @@
 # Status
 
-Where each milestone of the original design ([handoff](../handoff/README.md)) stands in this repository. "Verified" means covered by tests in `src/`, `tests/` or `tests/browser/smoke.mjs`.
+Where each milestone of the original design ([handoff](../handoff/README.md)) stands in this repository. "Verified" means covered by tests in `src/`, `tests/`, `tests/js/` or `tests/browser/`.
 
 Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ replaced by a different design
 
@@ -8,12 +8,13 @@ Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ repla
 
 | | Handoff assessment | Now |
 |---|---|---|
-| Compiling crate, `cargo fmt/check/test` | not run | ✅ fmt, clippy `-D warnings`, 117 Rust tests, two browser suites |
+| Compiling crate, `cargo fmt/check/test` | not run | ✅ fmt, clippy `-D warnings`, Rust integration tests, JS runtime/WASM tests and browser suites |
 | Rolldown e2e | blocked | ✅ in-process, every build |
 | SSR app served end to end | not done | ✅ streaming React SSR + hydration in Chromium |
 | `/_forge/data` | design | ✅ |
 | Single-file HTML | fixture logic | ✅ React, JSX, three.js, vanilla; verified from `file://` |
 | Static export | design | ✅ |
+| Rust procedural models in browser WASM | not included | ✅ Cargo build integration, mesh ABI, `models` template and single-HTML output |
 | WASM-host target | skeleton | ❌ (reports "planned") |
 
 ## Milestones
@@ -67,6 +68,14 @@ Legend: ✅ implemented and verified · 🟡 partial · ❌ not yet · ⤳ repla
 | `forge:n8n`: `trigger()` and `webhook()` | `js/n8n.js` | `tests/server.rs::n8n_webhooks_in_both_directions` (fake n8n server) |
 | `forge run`, `forge test`, `forge:test` | `build/script.rs`, `js/test.js` | `tests/script.rs`, `tests/mcp.rs` |
 | `forge check` covers client-only pages | `build/mod.rs` | `tests/mcp.rs` |
+| Automatic locked Rust/WASM compilation and `forge:wasm/<name>` imports | `build/wasm.rs`, `config.rs` | `tests/wasm.rs`: actual cdylib, all targets, recompilation, failure, lockfile and path cases |
+| Rust procedural sphere, torus, rock and terrain; validated mesh ABI | `examples/model-lab/rust/mesh`, `js/mesh.js` | native Rust tests and `tests/js/mesh.test.mjs` against actual WASM |
+| Model editor, WebGPU/WebGL2 selection, GLB export and offline HTML | `examples/model-lab`, `js/game.js` | `tests/browser/models.mjs` in Chromium/WebKit; hardware WebGPU and physical iPhone are separate checks |
+| Independent touch controls, gamepads, adaptive resolution and input lifecycle | `js/game.js`, `examples/three-game` | `tests/js/game.test.mjs`, browser runtime checks and native multitouch Orb Runner checks |
+| Client/CSS/WASM-aware reload identifiers and configured-output watch filtering | `build/mod.rs`, `server/dev.rs`, `server/single.rs` | `tests/build.rs`, `tests/wasm.rs`, `tests/single_dev.rs` |
+
+The [implementation and verification record](plans/2026-11-23-rust-models.md)
+records the Rust-model upgrade's checked scope and device-testing limits.
 
 ## The 8D fixture, file by file
 

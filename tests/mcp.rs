@@ -118,6 +118,9 @@ fn mcp_session_over_stdio() {
     assert!(outline.contains("- Theme") && structured["sections"].as_array().unwrap().len() > 3, "{outline}");
     let (section, _, _) = s.tool("forge_docs_read", json!({ "doc": "design", "section": "what to avoid" }));
     assert!(section.contains("Emoji"), "{section}");
+    let (models, _, is_error) =
+        s.tool("forge_docs_read", json!({ "doc": "models", "section": "Configure Rust compilation" }));
+    assert!(!is_error && models.contains("manifestPath") && models.contains("--locked"), "{models}");
     let (miss, _, is_error) = s.tool("forge_docs_search", json!({ "query": "qqqqzzzz" }));
     assert!(is_error && miss.contains("forge_docs_read"), "{miss}");
 
@@ -131,7 +134,10 @@ fn mcp_session_over_stdio() {
 
     // Create, inspect, check and build a project (the vanilla template needs no npm install).
     let (templates, _, _) = s.tool("forge_templates", json!({}));
-    assert!(templates.contains("- starter:") && templates.contains("- vanilla:"), "{templates}");
+    assert!(
+        templates.contains("- starter:") && templates.contains("- vanilla:") && templates.contains("- models:"),
+        "{templates}"
+    );
     let (created, structured, is_error) = s.tool("forge_new", json!({ "dir": "site", "template": "vanilla" }));
     assert!(!is_error && structured["files"].as_array().unwrap().len() > 3, "{created}");
     let (again, _, is_error) = s.tool("forge_new", json!({ "dir": "site", "template": "vanilla" }));
@@ -174,6 +180,7 @@ fn mcp_session_over_stdio() {
     // Resources and prompts.
     let resources = s.request("resources/list", json!({}));
     assert!(resources["result"]["resources"].as_array().unwrap().iter().any(|r| r["uri"] == "forge://docs/guide"));
+    assert!(resources["result"]["resources"].as_array().unwrap().iter().any(|r| r["uri"] == "forge://docs/models"));
     let guide = s.request("resources/read", json!({ "uri": "forge://docs/design" }));
     assert!(guide["result"]["contents"][0]["text"].as_str().unwrap().contains("# Design rules"));
     let prompt =

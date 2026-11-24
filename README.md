@@ -78,7 +78,7 @@ cargo install --git https://github.com/CartyChris/Next.RS
 ```
 
 ```bash
-forge new my-app --template starter   # or: react, jsx, vanilla, three, ai, pixel, arena
+forge new my-app --template starter   # or: react, jsx, vanilla, three, models, ai, pixel, arena
 ```
 
 ```bash
@@ -86,6 +86,33 @@ cd my-app && npm install && forge dev
 ```
 
 `forge dev` rebuilds on save (the React example: ~0.2 s including restarting the JS workers) and reloads the browser. Build and security errors appear as an in-browser overlay.
+
+## Rust-generated 3D models in one HTML file
+
+The `models` template compiles a dependency-free Rust mesh generator to real
+WebAssembly. Rust generates the positions, normals, UVs and indices for spheres,
+tori, seeded rocks and terrain. Three.js displays the result, with WebGPU when
+available and a WebGL2 fallback. The editor includes orbit/pinch controls,
+wireframe/normal inspection, adjustable geometry and GLB export.
+
+```bash
+rustup target add wasm32-unknown-unknown
+forge new model-lab --template models
+cd model-lab && npm ci
+forge build --target single-html
+```
+
+`dist/index.html` contains the compiled WASM, renderer, application and styles.
+Configured Rust crates build automatically through `build.wasm`, and imports such
+as `forge:wasm/mesh` become embedded data in single-file output. The `forge:mesh`
+adapter validates the ABI and returns owned typed arrays. Only projects that opt
+into Rust compilation need Cargo and the WASM target.
+
+The example runs through Chromium and WebKit browser checks. WebKit coverage is
+distinct from physical iPhone testing; use an HTTPS page for phone distribution.
+Existing GLSL games retain their compatible renderer and gain reusable touch,
+gamepad and adaptive-resolution helpers. See [the models guide](docs/MODELS.md)
+and [Model Lab](examples/model-lab).
 
 ## An interface kit in the binary
 
@@ -152,7 +179,8 @@ An agent should be able to build with a framework it has never seen. Next.RS car
 - `forge:store`: `usePersistentState`, localStorage-backed (save games, settings), works from `file://`
 - `forge:ai`: `chat()` and a tool-calling `runAgent()` over OpenAI-compatible, Anthropic, Gemini and Ollama protocols (normalized streaming events, assembled tool arguments, usage, abort), plus a mock provider for offline work
 - `forge:realtime`: sockets and pub/sub (above)
-- `forge:game`: fixed-timestep loop, keyboard/pointer input, DPR-aware canvas sizing
+- `forge:game`: fixed-timestep loop, keyboard/multipointer input, independent joysticks/action buttons, gamepads, adaptive DPR and async renderer fallback
+- `forge:mesh`: validated Rust mesh ABI, copied typed arrays, geometry bounds and lifecycle cleanup; `forge:wasm/<name>` imports compiled Rust libraries
 - `forge:file`: open/save/drop files; self-saving single files (`useDocument`, `saveSelf`)
 - `forge:ui`: components, themes and looks (above)
 - `forge:n8n`: call n8n workflows with `trigger()`, receive their calls with `webhook()`; works with any webhook tool
@@ -178,6 +206,7 @@ An agent should be able to build with a framework it has never seen. Next.RS car
 | [`jsx`](examples/jsx) | plain JSX clicker with persistent state, built as one HTML file |
 | [`vanilla`](examples/vanilla) | no framework, zero dependencies: `render()` + `mount()`, loaders, API |
 | [`three`](examples/three-game) | three.js game: fixed-step loop, input, GLSL imports; 145 kB single file |
+| [`models`](examples/model-lab) | **Model Lab**: Rust/WASM procedural models, WebGPU/WebGL2 viewer, touch orbit, wireframe/normals and GLB export in one offline file |
 | [`pixel`](examples/pixel) | **Pixel Pad**: pixel-art editor in one 90 kB file that saves itself, imports dropped images, exports PNG |
 | [`ai`](examples/ai-chat) | streaming chat UI; proxies any OpenAI-compatible API (OpenAI, Ollama, LM Studio, vLLM, …) or echoes offline |
 | [`arena`](examples/arena) | **Forge Arena**: multiplayer socket rooms, neural bots trained in a worker, SSR lobby, 257 kB offline build |
@@ -209,6 +238,7 @@ QuickJS is an interpreter, so JS-heavy React SSR is several times slower than a 
 
 - [Guide](docs/GUIDE.md): routing, pages, layouts, loaders, APIs, targets, modules, configuration, security, deployment
 - [Agent guide](docs/AGENT_GUIDE.md): the one-page version for coding agents; also `forge docs --read agents`
+- [Rust models and mobile 3D](docs/MODELS.md): Cargo/WASM integration, mesh ABI, renderer fallback, touch/gamepad controls and browser verification
 - [Forge UI](docs/FORGE_UI.md) and [design rules](docs/DESIGN.md): components, looks, tokens, and what good looks like
 - [Architecture](docs/ARCHITECTURE.md): how the build, runtime and server fit together, and why
 - [Status](docs/STATUS.md): what is implemented, mapped against the original milestone plan
@@ -222,13 +252,23 @@ cargo test                                      # unit + integration tests (no n
 ```
 
 ```bash
-for e in react jsx three-game ai-chat arena pixel starter ui-showcase; do (cd examples/$e && npm ci); done
+rustup target add wasm32-unknown-unknown
+for e in react jsx three-game ai-chat arena pixel starter ui-showcase model-lab; do (cd examples/$e && npm ci); done
 cargo test --features e2e                       # React / JSX / three.js / AI examples
+node --test tests/js/*.test.mjs                 # game runtime + real Rust/WASM mesh boundary
+cargo test --locked --manifest-path examples/model-lab/rust/mesh/Cargo.toml
 ```
 
 ```bash
-cargo build --release && (cd tests/browser && npm install && npx playwright install chromium && node smoke.mjs ../../target/release/forge)
+cargo build --release
+node tests/browser/smoke.mjs target/release/forge
+node tests/browser/models.mjs target/release/forge
 ```
+
+Use an already installed Playwright package with its Chromium and WebKit runtimes.
+CI installs browser tooling outside the repository; do not add a local Playwright
+copy under `tests/browser/node_modules`. Browser checks require real graphics
+contexts. See `.github/workflows/ci.yml` for the reproducible setup.
 
 ```bash
 node tests/browser/forge-ui.mjs target/release/forge   # forge:ui showcase on all three targets, with axe
@@ -239,7 +279,7 @@ src/
   main.rs            CLI: new, dev, build, start, check, run, test, docs, themes, mcp, pack
   config.rs          forge.config.json, targets, .env
   routes.rs          app/ scanner and matcher
-  build/             analyze (Oxc), generated (codegen), bundle (Rolldown), html, manifest
+  build/             analyze (Oxc), wasm (Cargo), generated (codegen), bundle (Rolldown), html, manifest
   runtime/           QuickJS worker pool, host ops, embedded JS runtime (js/)
   server/            Axum handler, static files, dev server
   render.rs          request protocol and page documents
@@ -247,8 +287,8 @@ src/
   mcp.rs             MCP server, built-in docs search, component and theme lookup
   pack/              forge pack: pages and component files into one offline file
 packages/forge-ui/   source of the built-in forge:ui module
-examples/            nine apps: the `forge new` templates, the showcase, and test fixtures
-tests/               Rust integration tests and the browser smoke test
+examples/            templates, the model editor, the UI showcase, and test fixtures
+tests/               Rust integration, JavaScript runtime and browser tests
 ```
 
 ## License

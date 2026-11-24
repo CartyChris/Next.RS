@@ -29,6 +29,11 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("ui", "forge:ui component reference, theming and patterns", include_str!("../docs/FORGE_UI.md")),
     ("design", "Design rules: how to build interfaces that look professional", include_str!("../docs/DESIGN.md")),
     ("architecture", "How the build, runtime and server work", include_str!("../docs/ARCHITECTURE.md")),
+    (
+        "models",
+        "Rust/WASM procedural meshes, single-file models, WebGPU fallback and mobile controls",
+        include_str!("../docs/MODELS.md"),
+    ),
 ];
 
 /// One heading and the text under it.
@@ -286,8 +291,9 @@ fn tools() -> Value {
     let root = json!({ "type": "string", "description": "Project directory (contains app/). Default: the server's working directory.", "default": "." });
     let read_only =
         json!({ "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false });
+    // Configured Rust crates may download locked dependencies and execute Cargo build scripts.
     let writes =
-        json!({ "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false });
+        json!({ "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true });
     json!([
         {
             "name": "forge_docs_search",
@@ -304,7 +310,7 @@ fn tools() -> Value {
         {
             "name": "forge_docs_read",
             "title": "Read a Next.RS doc",
-            "description": "Read one built-in document. Without `section` it returns the document's outline (its headings); with `section` it returns that section's markdown. Documents: agents (start here), guide, ui, design, architecture.",
+            "description": "Read one built-in document. Without `section` it returns the document's outline (its headings); with `section` it returns that section's markdown. Documents: agents (start here), guide, ui, design, architecture, models (Rust/WASM and mobile 3D).",
             "inputSchema": { "type": "object", "properties": {
                 "doc": { "type": "string", "enum": DOCS.iter().map(|d| d.0).collect::<Vec<_>>() },
                 "section": { "type": "string", "description": "A heading from the outline, e.g. \"Loaders\" (case-insensitive, partial match allowed)" }
@@ -339,7 +345,7 @@ fn tools() -> Value {
         {
             "name": "forge_new",
             "title": "Create a project",
-            "description": "Create a new Next.RS project from a template in an empty or missing directory. Afterwards run `npm install` in it (the vanilla template needs none), then `forge dev`.",
+            "description": "Create a new Next.RS project from a template in an empty or missing directory. Afterwards install npm dependencies (vanilla needs none), then `forge dev`. The models template includes locked dependencies and requires Cargo plus the wasm32-unknown-unknown Rust target.",
             "inputSchema": { "type": "object", "properties": {
                 "dir": { "type": "string", "description": "Directory to create, e.g. \"my-app\"" },
                 "template": { "type": "string", "enum": scaffold::TEMPLATES.iter().map(|t| t.0).collect::<Vec<_>>(), "default": "starter" }
@@ -356,14 +362,14 @@ fn tools() -> Value {
         {
             "name": "forge_check",
             "title": "Check a project",
-            "description": "Validate routes, bundle the server code and run the security scan (eval, remote imports, internals) without writing a build. Also writes .forge/types so `tsc` can type-check forge:* imports. Returns errors with file:line:column, or the route table and warnings.",
+            "description": "Validate routes, compile configured build.wasm crates with Cargo, bundle/scan server and client code, and write .forge/types without deployable output. Cargo build scripts run with normal host permissions. Returns errors with file:line:column, or the route table and warnings.",
             "inputSchema": { "type": "object", "properties": { "root": root } },
             "annotations": writes
         },
         {
             "name": "forge_build",
             "title": "Build a project",
-            "description": "Build a project for one target: `server` (SSR app for `forge start`), `static` (prerendered site in dist/), or `single-html` (one offline dist/index.html). Returns output paths, sizes and warnings, or the build errors.",
+            "description": "Build a project for one target: `server` (SSR app for `forge start`), `static` (prerendered site in dist/), or `single-html` (one offline dist/index.html). Configured build.wasm crates run through Cargo with normal host permissions and are embedded or emitted as assets. Returns output paths, sizes, warnings or build errors.",
             "inputSchema": { "type": "object", "properties": {
                 "root": root,
                 "target": { "type": "string", "enum": ["server", "static", "single-html"], "default": "server" }
@@ -373,12 +379,12 @@ fn tools() -> Value {
         {
             "name": "forge_test",
             "title": "Run a project's tests",
-            "description": "Run the project's *.test.* and *.spec.* files (written with `import { test, expect } from \"forge:test\"`) in the embedded engine and return each test's result. Use it to verify loaders, API handlers and plain logic after a change.",
+            "description": "Run the project's *.test.* and *.spec.* files (written with `import { test, expect } from \"forge:test\"`) in the embedded engine and return each test's result. Configured Rust/WASM inputs compile with Cargo first; browser WASM execution itself needs browser or Node tests. Use forge:test for loaders, API handlers and plain logic.",
             "inputSchema": { "type": "object", "properties": {
                 "root": root,
                 "filter": { "type": "string", "description": "Only files whose path contains this text" }
             } },
-            "annotations": read_only
+            "annotations": writes
         },
         {
             "name": "forge_pack",
@@ -648,7 +654,7 @@ const PROMPTS: &[(&str, &str, &str)] = &[
     (
         "forge_build_game",
         "Plan and build a game with Next.RS",
-        "Build this game with Next.RS: {idea}\n\nWork in this order:\n1. Read the `agents` doc, then search the guide for \"forge:game\" and \"single-html\".\n2. Start from the `three` template for 3D or `vanilla` for 2D canvas (forge_new). Make the page client-only (`export const ssr = false`) if it touches WebGL at module scope.\n3. Run the simulation in a fixed-step `loop()` from forge:game, read input with `input()`, size the canvas with `fit()`.\n4. Put UI over the canvas in `Hud` slots from forge:ui; menus are `Dialog`s. Save progress with forge:store.\n5. Check with forge_check and build with forge_build target `single-html`: the result is one file that runs offline.",
+        "Build this game with Next.RS: {idea}\n\nWork in this order:\n1. Read the `agents` and `models` docs, then search for the required forge:game APIs and single-html behavior.\n2. Start from `three` for a 3D game, `models` for Rust-generated procedural meshes, or `vanilla` for 2D canvas. Models require Cargo and the wasm32-unknown-unknown target; use npm ci for locked example dependencies.\n3. Use a fixed-step loop, input, independent joystick/actionButton controls, gamepad and adaptiveQuality. Dispose controls and renderer resources on unmount.\n4. For Rust geometry, configure build.wasm and import forge:wasm/<name> with forge:mesh. Keep existing GLSL/EffectComposer games on WebGL; use createRenderer fallback for compatible materials.\n5. Put game UI in forge:ui HUD slots and dialogs; save progress with forge:store.\n6. Run forge_check and type checks, build single-html, and verify real offline rendering and touch behavior in Chromium and WebKit. Report physical-device and hardware-WebGPU checks separately.",
     ),
 ];
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Next.RS ("Forge") is one Rust binary that contains the bundler, the JavaScript engine and the HTTP server. Node.js is only used to install npm packages; it is never needed to build or run an app.
+Next.RS ("Forge") is one Rust binary that contains the bundler, the JavaScript engine and the HTTP server. Node.js is only used to install npm packages; it is never needed to build or run an app. Projects that explicitly configure `build.wasm` additionally need Cargo and the `wasm32-unknown-unknown` target at build time.
 
 ```text
                  forge build                                   forge start / forge dev
@@ -30,8 +30,23 @@ Next.RS ("Forge") is one Rust binary that contains the bundler, the JavaScript e
    - resolves `forge:*` to the server or browser runtime file,
    - enforces the import policy (internals, remote URLs, Node built-ins in the browser),
    - collects CSS in module order, emits hashed or inlined assets, loads shaders/text as strings,
-   - runs the AST security scan on app modules inside Rolldown's parallel transform phase (server build only, which sees every module).
+   - runs the AST security scan on app modules inside Rolldown's parallel transform phase on both sides, including client-only pages.
 5. **Emit** per target: `server` writes client chunks (Brotli + gzip precompressed), the server bundle, `manifest.json`, `capsule.json` (blake3 of every file) and `bundle-stats.json`. `static` and `single-html` start a build-time worker pool to run loaders, `staticParams()` and prerendering.
+
+When `build.wasm` is configured, `build/wasm.rs` runs Cargo after route analysis
+and before bundling. Compilation is locked, release-mode and targeted at browser
+WASM. Cargo JSON artifact messages identify each package's `cdylib`; caches live
+under the Forge output directory. Exact `forge:wasm/<name>` aliases feed the
+existing hashed/inlined asset pipeline, and their declarations are generated with
+the normal types. Cargo build scripts have host permissions, outside QuickJS.
+
+`forge:mesh` validates a small scalar ABI, reads memory after generation and
+copies typed arrays before another call can invalidate views. The Rust crate in
+`examples/model-lab/rust/mesh` owns procedural topology and normals; browser
+Three.js owns rendering. The example's synchronous GLB writer serializes the
+generated arrays and a PBR material without asynchronous file reads. This does
+not implement the planned `wasm-host` target. Details and limits are in
+[MODELS.md](MODELS.md).
 
 ## Runtime (`src/runtime/`)
 
@@ -49,6 +64,12 @@ Next.RS ("Forge") is one Rust binary that contains the bundler, the JavaScript e
 One Axum fallback handler, in order: probes → `/_forge/static/*` (immutable, precompressed) → `public/` files (paths with an extension) → `/_forge/data` → route table (WebSocket upgrades for socket routes) → not-found. A thin wrapper times every request (`Server-Timing`, access log). Page responses stream `document open + React stream + document close`, with a per-response CSP nonce. Routes with `revalidate` are buffered into a page cache and served stale-while-revalidate; `invalidate()` from server code evicts pages by path or prefix.
 
 `forge dev` watches the project (excluding `node_modules`, `.forge`, `dist`), rebuilds in process, swaps in a new worker pool atomically, and tells browsers to reload over server-sent events. Build failures render as an overlay and recover on the next save.
+
+Both dev targets exclude the currently configured output directories before a
+rebuild, including after a configuration edit. Rust manifests/lockfiles and
+source changes trigger builds; nested Cargo `target` directories do not. Build
+identifiers include configuration, server code, client chunks, CSS and emitted
+asset bytes, so client-only and Rust-only changes trigger live reload.
 
 ## Single files (`src/build/html.rs`, `src/server/single.rs`)
 

@@ -3,7 +3,7 @@
 //! The config file is plain JSON on purpose: reading it never executes user code.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt,
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -188,6 +188,25 @@ pub struct BuildConfig {
     pub compress: Compress,
     /// Extra compile-time replacements, e.g. `{"__VERSION__": "\"1.2.3\""}`.
     pub define: BTreeMap<String, String>,
+    /// Rust libraries compiled before bundling and imported as `forge:wasm/<name>`.
+    pub wasm: Vec<WasmConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmConfig {
+    /// Lowercase import alias, e.g. `mesh` in `forge:wasm/mesh`.
+    pub name: String,
+    /// A package's Cargo.toml, relative to the Next.RS project root.
+    pub manifest_path: String,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default = "enabled")]
+    pub default_features: bool,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 impl Config {
@@ -223,6 +242,43 @@ impl Config {
         }
         if overlap(&outputs[0].1, &outputs[1].1) {
             bail!("`outDir` and `distDir` must not overlap");
+        }
+        let mut names = BTreeSet::new();
+        for wasm in &self.build.wasm {
+            let name = &wasm.name;
+            if name.is_empty()
+                || name.len() > 64
+                || !name.as_bytes()[0].is_ascii_lowercase()
+                || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+            {
+                bail!("build.wasm name {name:?} must match [a-z][a-z0-9_-]* and contain at most 64 characters");
+            }
+            if !names.insert(name) {
+                bail!("duplicate build.wasm name {name:?}");
+            }
+            let manifest = rel("build.wasm.manifestPath", &wasm.manifest_path)?;
+            if wasm.manifest_path.contains('\\') || manifest.file_name().is_none_or(|f| f != "Cargo.toml") {
+                bail!(
+                    "build.wasm `{name}` manifestPath must name a Cargo.toml inside the project (use forward slashes)"
+                );
+            }
+            if outputs.iter().any(|(_, out)| manifest.starts_with(out)) {
+                bail!(
+                    "build.wasm `{name}` manifestPath must not be inside outDir or distDir: build outputs are rewritten"
+                );
+            }
+            for feature in &wasm.features {
+                if feature.is_empty()
+                    || feature.starts_with('-')
+                    || !feature
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'/' | b'?' | b'+'))
+                {
+                    bail!(
+                        "build.wasm `{name}` has invalid Cargo feature {feature:?}; specify one feature per array entry"
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -356,6 +412,47 @@ mod tests {
     #[test]
     fn unknown_keys_are_rejected() {
         assert!(serde_json::from_str::<Config>(r#"{"sever":{}}"#).is_err());
+    }
+
+    #[test]
+    fn wasm_configuration_has_explicit_bounded_names_and_inputs() {
+        let check = |wasm: serde_json::Value| -> Result<()> {
+            let c: Config = serde_json::from_value(serde_json::json!({"build": {"wasm": wasm}}))?;
+            c.check_dirs()
+        };
+        assert!(check(serde_json::json!([{"name":"mesh","manifestPath":"rust/mesh/Cargo.toml"}])).is_ok());
+        assert!(check(serde_json::json!([{"name":"mesh-2","manifestPath":"Cargo.toml","features":["noise","dep/fast"],"defaultFeatures":false}])).is_ok());
+        for name in ["", "../mesh", "mesh/other", "Mesh", "two words", "-flag"] {
+            assert!(check(serde_json::json!([{"name":name,"manifestPath":"Cargo.toml"}])).is_err(), "{name:?}");
+        }
+        assert!(check(serde_json::json!([{"name":"x".repeat(65),"manifestPath":"Cargo.toml"}])).is_err());
+        for path in [
+            "",
+            "../Cargo.toml",
+            "/tmp/Cargo.toml",
+            "rust/../Cargo.toml",
+            "rust/mesh.toml",
+            ".forge/Cargo.toml",
+            "dist/crate/Cargo.toml",
+            "rust\\Cargo.toml",
+        ] {
+            assert!(check(serde_json::json!([{"name":"mesh","manifestPath":path}])).is_err(), "{path:?}");
+        }
+        for feature in ["", "a,b", "a b", "--release", "x\n--offline"] {
+            assert!(
+                check(serde_json::json!([{"name":"mesh","manifestPath":"Cargo.toml","features":[feature]}])).is_err(),
+                "{feature:?}"
+            );
+        }
+        assert!(
+            check(serde_json::json!([
+                {"name":"mesh","manifestPath":"a/Cargo.toml"},
+                {"name":"mesh","manifestPath":"b/Cargo.toml"}
+            ]))
+            .is_err()
+        );
+        assert!(check(serde_json::json!([{"name":"mesh","manifestPath":"Cargo.toml","manfiestPath":"typo"}])).is_err());
+        assert!(check(serde_json::json!([{"name":"mesh"}])).is_err());
     }
 
     #[test]

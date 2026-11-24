@@ -5,9 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   rust:
@@ -18,10 +28,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --locked --all-targets --features e2e -- -D warnings
+      - run: cargo test --locked
+      - run: cargo test --locked --features e2e --test wasm
+      - name: Test the Rust mesh generator and JavaScript runtime
+        run: |
+          npm ci --prefix examples/model-lab --no-audit --no-fund
+          cargo fmt --manifest-path examples/model-lab/rust/mesh/Cargo.toml --check
+          cargo clippy --locked --manifest-path examples/model-lab/rust/mesh/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path examples/model-lab/rust/mesh/Cargo.toml
+          node --test tests/js/*.test.mjs
 
   e2e:
     name: examples (npm) + browser
@@ -36,20 +58,66 @@ jobs:
           node-version: 22
       - name: Install example dependencies
         run: for e in react jsx three-game ai-chat arena pixel starter; do (cd examples/$e && npm ci --no-audit --no-fund); done
-      - run: cargo test --features e2e --test react
+      - run: cargo test --locked --features e2e --test react
       - name: Type-check the arena against Forge's declarations
         working-directory: examples/arena
         run: mkdir -p .forge/types && cp ../../src/runtime/js/forge.d.ts .forge/types/ && npx tsc -p .
-      - run: cargo build --release
+      - run: cargo build --locked --release
       - name: Type-check and test the starter template
         working-directory: examples/starter
         run: |
           ../../target/release/forge check .
           npx tsc -p .
           ../../target/release/forge test .
-      - name: Browser tests
-        working-directory: tests/browser
+      - name: Install browser tools outside the repository
         run: |
-          npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
-          node smoke.mjs ../../target/release/forge
+          npm install --prefix "$RUNNER_TEMP/forge-browser-tools" --no-audit --no-fund playwright@1.62.1
+          echo "NODE_PATH=$RUNNER_TEMP/forge-browser-tools/node_modules" >> "$GITHUB_ENV"
+          node "$RUNNER_TEMP/forge-browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Existing browser regression suite
+        run: node tests/browser/smoke.mjs target/release/forge
+
+  models:
+    name: Rust WASM models (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      FORGE_MODELS_BROWSER: ${{ matrix.browser }}
+      FORGE_BROWSER_ARTIFACTS: artifacts/models-${{ matrix.browser }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the model example
+        working-directory: examples/model-lab
+        run: npm ci --no-audit --no-fund
+      - name: Build Forge
+        run: cargo build --locked --release
+      - name: Type-check the model example
+        working-directory: examples/model-lab
+        run: |
+          ../../target/release/forge check .
+          npm run typecheck
+      - name: Install browser tools outside the repository
+        run: |
+          npm install --prefix "$RUNNER_TEMP/forge-browser-tools" --no-audit --no-fund playwright@1.62.1
+          echo "NODE_PATH=$RUNNER_TEMP/forge-browser-tools/node_modules" >> "$GITHUB_ENV"
+          node "$RUNNER_TEMP/forge-browser-tools/node_modules/playwright/cli.js" install --with-deps "${{ matrix.browser }}"
+      - name: Check offline Rust models, rendering, mobile input, and failures
+        run: node tests/browser/models.mjs target/release/forge
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: models-${{ matrix.browser }}
+          path: artifacts/models-${{ matrix.browser }}
+          if-no-files-found: warn

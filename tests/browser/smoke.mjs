@@ -68,7 +68,10 @@ async function page(browser, options) {
   return p;
 }
 
-const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+const browser = await chromium.launch({
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+  args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+});
 try {
   // React, server target: hydration, prefetch, navigation, streaming.
   build("react", "server");
@@ -143,6 +146,54 @@ try {
   const size = await p.evaluate(() => [document.querySelector("canvas").width, document.querySelector("canvas").height]);
   check("three: canvas sized to viewport", size[0] === 800 && size[1] === 600, JSON.stringify(size));
   check("three: no console errors", p.errors.length === 0, JSON.stringify(p.errors));
+  await p.close();
+
+  // Orb Runner's shipped controls: actual simultaneous touch contacts through
+  // Chromium, then independent cancellation and keyboard action behavior.
+  p = await page(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+  await p.context().setOffline(true);
+  await p.route(/^https?:/i, (route) => route.abort());
+  await p.goto("file://" + join(examples, "three-game/dist/index.html"));
+  await p.locator("#game-stick").waitFor();
+  await p.locator("#game-dash").waitFor();
+  const stickBox = await p.locator("#game-stick").boundingBox();
+  const dashBox = await p.locator("#game-dash").boundingBox();
+  const contacts = [
+    { id: 1, x: stickBox.x + stickBox.width * 0.8, y: stickBox.y + stickBox.height / 2 },
+    { id: 2, x: dashBox.x + dashBox.width / 2, y: dashBox.y + dashBox.height / 2 },
+  ];
+  const session = await p.context().newCDPSession(p);
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: contacts });
+  await p.waitForFunction(() => document.querySelector("#game-stick").dataset.active === "true" && document.querySelector("#game-dash").getAttribute("aria-pressed") === "true");
+  check("three mobile: steering and dash accept simultaneous native touches", true);
+  await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await p.waitForFunction(() => document.querySelector("#game-stick").dataset.active === "false" && document.querySelector("#game-dash").getAttribute("aria-pressed") === "false");
+  await session.detach();
+  const mobileControls = await p.evaluate(() => {
+    const stick = document.querySelector("#game-stick"), dash = document.querySelector("#game-dash");
+    const thumb = stick.querySelector(".stick-thumb"), rect = stick.getBoundingClientRect();
+    const center = thumb.style.transform;
+    const fire = (element, type, pointerId) => element.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerType: "touch", button: 0, pointerId,
+      clientX: rect.left + rect.width * 0.8, clientY: rect.top + rect.height / 2,
+    }));
+    fire(stick, "pointerdown", 41); fire(dash, "pointerdown", 42);
+    const steered = thumb.style.transform;
+    fire(dash, "pointercancel", 42);
+    const independent = stick.dataset.active === "true" && dash.getAttribute("aria-pressed") === "false" && thumb.style.transform === steered;
+    fire(stick, "pointerup", 41);
+    return { independent, moved: steered !== center, released: stick.dataset.active === "false" && thumb.style.transform === center };
+  });
+  check("three mobile: cancelling dash preserves steering; release centers it", mobileControls.independent && mobileControls.moved && mobileControls.released, JSON.stringify(mobileControls));
+  await p.keyboard.down("Space");
+  await p.waitForFunction(() => document.querySelector("#game-dash").getAttribute("aria-pressed") === "true");
+  await p.keyboard.up("Space");
+  await p.waitForFunction(() => document.querySelector("#game-dash").getAttribute("aria-pressed") === "false");
+  check("three mobile: keyboard and touch use the same dash action", true);
+  const mobileSize = await p.locator("canvas").evaluate((canvas) => ({ width: canvas.width, height: canvas.height, cssWidth: canvas.clientWidth, cssHeight: canvas.clientHeight }));
+  check("three mobile: canvas has a bounded, nonempty backing buffer", mobileSize.width > 0 && mobileSize.height > 0 && mobileSize.width <= mobileSize.cssWidth * 2 && mobileSize.height <= mobileSize.cssHeight * 2, JSON.stringify(mobileSize));
+  check("three mobile: one offline file, no runtime errors", p.requests.every((url) => /^(file|blob|data):/.test(url)) && !p.errors.length, JSON.stringify([p.requests, p.errors]));
+  await p.close();
 
   // Vanilla: mount/cleanup and navigation without a framework.
   build("vanilla", "server");

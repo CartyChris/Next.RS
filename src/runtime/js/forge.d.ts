@@ -146,16 +146,115 @@ interface ForgeSocketHandlers<P extends Record<string, string> = Record<string, 
 }
 
 declare module "forge:game" {
+  /** Fixed simulation steps in seconds. Hidden tabs accumulate no simulation time. */
   export function loop(options: { update?: (dt: number) => void; render?: (alpha: number) => void; step?: number; maxSteps?: number }): () => void;
+
+  export interface PointerState { x: number; y: number; down: boolean }
+  export interface ActivePointer extends PointerState { pointerId: number; pointerType: string }
+  /** Pointer coordinates are target-local CSS pixels. Blur/hidden clear all input. */
   export function input(target?: Window | HTMLElement): {
-    pointer: { x: number; y: number; down: boolean };
+    pointer: PointerState;
+    pointers: ReadonlyMap<number, ActivePointer>;
     down(code: string): boolean;
     pressed(code: string): boolean;
     axis(negative: string, positive: string): -1 | 0 | 1;
     endFrame(): void;
+    reset(): void;
     dispose(): void;
   };
-  export function fit(canvas: HTMLCanvasElement, onResize?: (width: number, height: number, dpr: number) => void, options?: { maxDpr?: number }): () => void;
+
+  export interface JoystickState { readonly x: number; readonly y: number; readonly active: boolean }
+  /** One owning pointer per stick; other fingers can operate other controls. y points down. */
+  export function joystick(target: HTMLElement, options?: {
+    /** CSS pixels; defaults to half the smaller target dimension. */
+    radius?: number;
+    /** Radial dead zone in [0, 1); defaults to 0.12. */
+    deadZone?: number;
+    onChange?: (state: JoystickState) => void;
+  }): JoystickState & { reset(): void; dispose(): void };
+
+  /** Pointer and configured keys hold independent state. Focused controls accept Space/Enter. */
+  export function actionButton(target: HTMLElement, options?: {
+    /** KeyboardEvent.code values, active even when the control is not focused. */
+    keys?: readonly string[];
+    onChange?: (down: boolean) => void;
+  }): {
+    readonly down: boolean;
+    /** Rising-edge latch, cleared by endFrame(), cancellation, blur, or reset(). */
+    readonly pressed: boolean;
+    endFrame(): void;
+    reset(): void;
+    dispose(): void;
+  };
+
+  export interface GamepadState {
+    readonly connected: boolean;
+    readonly id: string;
+    /** Active device index, or -1 while disconnected. */
+    readonly index: number;
+    readonly x: number;
+    readonly y: number;
+    axis(index: number): number;
+    down(index: number): boolean;
+    value(index: number): number;
+    /** Read browser state once per update. Denied access, blur and hidden yield zero state. */
+    poll(): GamepadState;
+    dispose(): void;
+  }
+  /** Defaults to the first connected pad, with dead zone 0.15. Axes are remapped to [-1, 1]. */
+  export function gamepad(options?: { index?: number; deadZone?: number }): GamepadState;
+
+  export interface FitDisposer {
+    (): void;
+    /** Apply an updated DPR cap immediately; a no-op after disposal. */
+    refresh(): void;
+  }
+  export function fit(canvas: HTMLCanvasElement, onResize?: (width: number, height: number, dpr: number) => void, options?: { maxDpr?: number | (() => number) }): FitDisposer;
+
+  export interface QualityChange { reason: "slow" | "fast" | "reset"; averageMs: number | null }
+  /** Changes DPR after complete sample windows, with distinct fast/slow thresholds and cooldown. */
+  export function adaptiveQuality(options?: {
+    minDpr?: number;
+    maxDpr?: number;
+    initialDpr?: number;
+    targetFps?: number;
+    sampleFrames?: number;
+    cooldownFrames?: number;
+    step?: number;
+    onChange?: (dpr: number, change: QualityChange) => void;
+  }): {
+    readonly dpr: number;
+    /** Actual rendered-frame milliseconds. Invalid, hidden and >1s samples are discarded. */
+    sample(frameMs: number): number;
+    reset(): void;
+    dispose(): void;
+  };
+
+  export type RendererBackend = "webgpu" | "webgl";
+  export interface RendererLifecycle {
+    /** Some renderers return themselves from initialization; the helper ignores that value. */
+    init?(): void | object | Promise<void | object>;
+    dispose?(): void | Promise<void>;
+  }
+  export interface RendererOptions<GL extends RendererLifecycle, GPU extends RendererLifecycle = GL> {
+    webgl: () => GL | Promise<GL>;
+    webgpu?: () => GPU | Promise<GPU>;
+    /** auto checks navigator.gpu; webgpu attempts it even without detection; webgl skips it. */
+    prefer?: "auto" | RendererBackend;
+    /** Report a renderer's own internal fallback after init(), if it has one. */
+    backendOf?: (renderer: GL | GPU) => RendererBackend;
+    /** Cancellation is checked after async creation/init, disposing a late result without fallback. */
+    signal?: AbortSignal;
+  }
+  export interface RendererSelection<R extends RendererLifecycle> {
+    renderer: R;
+    backend: RendererBackend;
+    fallbackReason: string | null;
+  }
+  /** Factory-owned canvases allow WebGPU failure to fall back on a fresh WebGL canvas.
+   * Failed candidates are disposed. Both failures produce an AggregateError with their causes.
+   * Without backendOf, backend identifies the selected factory. GLSL apps should prefer WebGL. */
+  export function createRenderer<GL extends RendererLifecycle, GPU extends RendererLifecycle = GL>(options: RendererOptions<GL, GPU>): Promise<RendererSelection<GL | GPU>>;
 }
 
 declare module "forge:file" {
@@ -334,3 +433,40 @@ declare module "*.wgsl" { const source: string; export default source; }
 declare module "*.txt" { const text: string; export default text; }
 declare module "*.md" { const text: string; export default text; }
 declare module "*.prompt" { const text: string; export default text; }
+
+declare module "forge:mesh" {
+  export type MeshKind = "sphere" | "torus" | "rock" | "terrain";
+  export interface MeshOptions {
+    kind?: MeshKind;
+    /** Integer 8–128; default 48. */
+    detail?: number;
+    /** Unsigned 32-bit integer; default 17. Affects rock and terrain. */
+    seed?: number;
+    /** Uniform scale in metres, 0.01–100; default 1. */
+    scale?: number;
+    /** 0–1, default 0.5. Tube thickness or surface variation. */
+    variation?: number;
+  }
+  export interface MeshAttributes {
+    positions: Float32Array;
+    normals: Float32Array;
+    uvs: Float32Array;
+    indices: Uint32Array;
+  }
+  export interface MeshData extends MeshAttributes {
+    vertexCount: number;
+    triangleCount: number;
+    bounds: { min: [number, number, number]; max: [number, number, number] };
+  }
+  export interface MeshGenerator {
+    /** Returns validated, JS-owned copies that survive future generation/disposal. */
+    generate(options?: MeshOptions): MeshData;
+    /** Allocated WASM memory in bytes; zero after disposal. */
+    readonly memoryBytes: number;
+    dispose(): void;
+  }
+  /** Validates attributes/topology and calculates bounds. Does not copy the arrays. */
+  export function validateMesh(mesh: MeshAttributes): MeshData;
+  /** Loads the Rust mesh ABI v1. Embedded WASM data URLs require no network. */
+  export function loadMeshGenerator(source: string | URL | ArrayBuffer | Uint8Array, options?: { signal?: AbortSignal }): Promise<MeshGenerator>;
+}

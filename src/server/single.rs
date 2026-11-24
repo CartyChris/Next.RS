@@ -171,16 +171,19 @@ pub async fn run_project(root: PathBuf, addr: SocketAddr) -> Result<()> {
 pub async fn run_project_on(root: PathBuf, listener: tokio::net::TcpListener) -> Result<()> {
     use crate::config::{Compress, Mode, Project, Target};
     let root = root.canonicalize()?;
-    let watch_root = root.clone();
+    let inputs = dev::Inputs::new(root.clone());
+    let filter = inputs.clone();
     let build_root = root.clone();
     run(
         listener,
         dev::watch_roots(&root),
-        move |p| dev::relevant(&watch_root, p),
+        move |p| filter.relevant(p),
         move || {
             let root = build_root.clone();
+            let inputs = inputs.clone();
             async move {
                 let mut project = Project::load(&root, Target::SingleHtml, Mode::Dev)?;
+                inputs.update(&project);
                 project.config.build.compress = Compress::Off;
                 let result = crate::build::build(&project).await?;
                 for w in &result.warnings {

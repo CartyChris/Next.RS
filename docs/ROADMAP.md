@@ -36,7 +36,7 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 21. **Asset manifest for games.** Glob imports (`import.meta.glob`) for levels/sprites/audio, with preload progress hooks.
 22. **WebTransport / unreliable datagrams** for fast-paced games (WebSocket rooms are done).
 23. **Durable rooms**: persist socket-room state across worker restarts and deploys.
-24. **WebGPU example** and a compute-shader template.
+24. **WebGPU compute-shader template.** The `models` example now covers Rust-generated geometry with WebGPU/WebGL2 rendering. GPU compute and migration of existing GLSL postprocessing to TSL remain separate work.
 
 ## Interface and agents
 
@@ -55,5 +55,12 @@ Tickets, roughly in priority order. Each is sized to be one focused change with 
 29. **`forge pack --serve` previews on phones**: bind to the LAN with a QR code in the terminal.
 
 ## Done (this repository)
+
+Rust-to-WASM compilation through `build.wasm`; `forge:wasm/<name>` imports on all
+browser targets; a validated `forge:mesh` ABI; the `models` procedural editor with
+single-HTML packaging and GLB export; optional WebGPU with WebGL2 fallback;
+multitouch controls, gamepads and adaptive resolution; Chromium/WebKit model
+coverage; client/WASM-aware reload identifiers and configured-output watch
+filtering. Browser engine tests are separate from physical iPhone verification.
 
 Compiling crate and tests, in-process Rolldown, QuickJS SSR worker pool, streaming SSR, data endpoint, API routes, server/static/single-html targets, page cache, security scan and CSP, dev server with live reload and error overlay, request cancellation, WebSocket rooms with Rust pub/sub, Web Worker and asset URL bundling, provider-agnostic AI chat and agents, automatic single-file compression, `forge:file` self-saving documents, `forge pack` for pages and component files, live single-file dev loops, the built-in `forge:ui` component library with named looks and a glass surface, server `Intl` for `en-US`, `forge mcp` / `forge docs` / `forge themes` for coding agents, `forge:n8n`, `forge run` and `forge test`, nine examples including Forge Arena, Pixel Pad, the starter and the Relay showcase, CI. See [STATUS.md](STATUS.md).

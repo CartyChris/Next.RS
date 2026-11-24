@@ -3,6 +3,7 @@
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -20,7 +21,17 @@ use crate::config::{Mode, Project, Target};
 const IGNORED: &[&str] = &["node_modules", ".forge", "dist", ".git", "target"];
 /// Files directly in the project root that affect a build. Anything else there (logs,
 /// notes, editor swap files) is ignored, so writing next to the project cannot loop.
-const ROOT_FILES: &[&str] = &["forge.config.json", "package.json", "tsconfig.json", "jsconfig.json", ".env"];
+const ROOT_FILES: &[&str] = &[
+    "forge.config.json",
+    "package.json",
+    "tsconfig.json",
+    "jsconfig.json",
+    ".env",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+];
 
 /// Does a change to `path` require a rebuild?
 pub(crate) fn relevant(root: &Path, path: &Path) -> bool {
@@ -32,8 +43,31 @@ pub(crate) fn relevant(root: &Path, path: &Path) -> bool {
         [dir, ..] => {
             !IGNORED.contains(&dir.as_str())
                 && !dir.starts_with('.')
+                && !parts[..parts.len() - 1].iter().any(|p| p == "target")
                 && !parts.iter().any(|p| p.ends_with('~') || p.ends_with(".swp"))
         }
+    }
+}
+
+/// Both dev targets share this filter. Update it before building after a config
+/// edit, so writes to a newly selected output directory cannot queue another build.
+#[derive(Clone)]
+pub(crate) struct Inputs {
+    root: PathBuf,
+    outputs: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl Inputs {
+    pub(crate) fn new(root: PathBuf) -> Self {
+        Self { root, outputs: Arc::new(Mutex::new(Vec::new())) }
+    }
+
+    pub(crate) fn update(&self, project: &Project) {
+        *self.outputs.lock().unwrap() = vec![project.out_dir(), project.dist_dir()];
+    }
+
+    pub(crate) fn relevant(&self, path: &Path) -> bool {
+        relevant(&self.root, path) && !self.outputs.lock().unwrap().iter().any(|output| path.starts_with(output))
     }
 }
 
@@ -109,12 +143,13 @@ pub(crate) fn live_stream(rx: tokio::sync::broadcast::Receiver<String>, current:
         .unwrap()
 }
 
-async fn rebuild(server: &Server, root: &Path) {
+async fn rebuild(server: &Server, root: &Path, inputs: &Inputs) {
     let started = Instant::now();
     let project = match Project::load(root, Target::Server, Mode::Dev) {
         Ok(p) => p,
         Err(e) => return fail(server, e),
     };
+    inputs.update(&project);
     let result = match crate::build::build(&project).await {
         Ok(r) => r,
         Err(e) => return fail(server, e),
@@ -188,15 +223,16 @@ pub async fn run(root: PathBuf, addr: SocketAddr) -> Result<()> {
     let server = Server::new(true);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("forge dev → http://{}", listener.local_addr()?);
-    rebuild(&server, &root).await;
+    let inputs = Inputs::new(root.clone());
+    rebuild(&server, &root, &inputs).await;
 
-    let watch_root = root.clone();
-    let (watcher, mut rx) = watch(watch_roots(&root), move |p| relevant(&watch_root, p))?;
+    let filter = inputs.clone();
+    let (watcher, mut rx) = watch(watch_roots(&root), move |p| filter.relevant(p))?;
     let s = server.clone();
     tokio::spawn(async move {
         let _watcher = watcher;
         while next_change(&mut rx).await {
-            rebuild(&s, &root).await;
+            rebuild(&s, &root, &inputs).await;
         }
     });
     server.serve_on(listener).await
@@ -209,7 +245,16 @@ mod tests {
     #[test]
     fn only_build_inputs_trigger_rebuilds() {
         let root = Path::new("/p");
-        for yes in ["/p/app/page.tsx", "/p/public/x.png", "/p/forge.config.json", "/p/.env", "/p/lib/util.ts"] {
+        for yes in [
+            "/p/app/page.tsx",
+            "/p/public/x.png",
+            "/p/forge.config.json",
+            "/p/.env",
+            "/p/lib/util.ts",
+            "/p/Cargo.toml",
+            "/p/Cargo.lock",
+            "/p/rust/mesh/src/lib.rs",
+        ] {
             assert!(relevant(root, Path::new(yes)), "{yes}");
         }
         for no in [
@@ -220,6 +265,7 @@ mod tests {
             "/p/dist/index.html",
             "/p/.git/HEAD",
             "/p/app/.page.tsx.swp",
+            "/p/rust/mesh/target/debug/mesh.wasm",
             "/other/app/x",
         ] {
             assert!(!relevant(root, Path::new(no)), "{no}");

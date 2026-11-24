@@ -50,7 +50,7 @@ serde_json = "1"
 sha1 = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
 tar = { version = "0.4", default-features = false, optional = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs", "signal", "process"] }
 url = "2"
 
 [dev-dependencies]
