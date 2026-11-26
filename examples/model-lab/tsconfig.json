@@ -11,5 +11,6 @@
     "isolatedModules": true,
     "types": []
   },
-  "include": ["app", ".forge/types"]
+  "include": ["app", ".forge/types"],
+  "exclude": ["app/_model/rust-renderer.ts", "app/_model/rust-view.ts", "app/_model/mixed-view.ts"]
 }

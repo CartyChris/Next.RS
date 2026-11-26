@@ -6,8 +6,29 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 macro_rules! files {
-    ($dir:literal: $($file:literal),* $(,)?) => {
-        &[$(($file, include_str!(concat!("../examples/", $dir, "/", $file)))),*]
+    (@source $dest:literal) => { $dest };
+    (@source $dest:literal => $source:literal) => { $source };
+    ($dir:literal: $($dest:literal $(=> $src:literal)?),* $(,)?) => {
+        &[$(($dest, include_str!(concat!("../examples/", $dir, "/", files!(@source $dest $(=> $src)?))))),*]
+    };
+}
+
+// The profiles share an editor, ABI and exporter. A generated project only
+// carries the renderer implementations (and npm dependencies) it selects.
+macro_rules! model_files {
+    (with_rust, $($entries:tt)*) => {
+        model_files!(
+            "forge.config.json" => "profiles/rust/forge.config.json",
+            "app/_model/rust-renderer.ts", "app/_model/orbit-input.ts", "rust/renderer/.gitignore", "rust/renderer/Cargo.toml",
+            "rust/renderer/Cargo.lock", "rust/renderer/src/lib.rs", "rust/renderer/src/model.vert",
+            "rust/renderer/src/model.frag", $($entries)*
+        )
+    };
+    ($($entries:tt)*) => {
+        files!("model-lab": "README.md", "tsconfig.json", "app/page.tsx", "app/layout.tsx", "app/model-lab.css",
+            "app/_model/model.ts", "app/_model/glb.ts", "tools/mesh.py", "tools/mesh_glb.py",
+            "rust/mesh/.gitignore", "rust/mesh/Cargo.toml", "rust/mesh/Cargo.lock", "rust/mesh/src/lib.rs",
+            $($entries)*)
     };
 }
 
@@ -37,9 +58,33 @@ pub const TEMPLATES: &[(&str, &str, Files)] = &[
     (
         "models",
         "Rust/WASM procedural 3D models, WebGPU/WebGL2 viewer, GLB export, offline single HTML",
-        files!("model-lab": "README.md", "package.json", "package-lock.json", "forge.config.json", "tsconfig.json",
-            "app/layout.tsx", "app/page.tsx", "app/model-lab.css", "app/_model/view.ts", "app/_model/glb.ts",
-            "rust/mesh/Cargo.toml", "rust/mesh/Cargo.lock", "rust/mesh/src/lib.rs", "rust/mesh/.gitignore"),
+        model_files!(
+            "forge.config.json",
+            "package.json",
+            "package-lock.json",
+            "app/_model/view.ts",
+            "app/_model/three-view.ts",
+        ),
+    ),
+    (
+        "models-rust",
+        "Rust/WASM mesh generator and WebGL2 renderer, Python/OBJ import, offline or hosted",
+        model_files!(with_rust,
+            "package.json" => "profiles/rust/package.json",
+            "package-lock.json" => "profiles/rust/package-lock.json",
+            "app/_model/view.ts" => "app/_model/rust-view.ts",
+        ),
+    ),
+    (
+        "models-mixed",
+        "Three.js or Rust/WASM renderer in one editor, with shared mesh import and GLB export",
+        model_files!(with_rust,
+            "package.json",
+            "package-lock.json",
+            "app/_model/view.ts" => "app/_model/mixed-view.ts",
+            "app/_model/three-view.ts",
+            "app/_model/rust-view.ts",
+        ),
     ),
     (
         "ai",
@@ -99,6 +144,33 @@ pub fn create(dir: &Path, template: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_profiles_embed_the_selected_renderers_and_matching_dependencies() {
+        use std::collections::BTreeMap;
+
+        for (name, has_three, has_rust) in
+            [("models", true, false), ("models-rust", false, true), ("models-mixed", true, true)]
+        {
+            let entries = TEMPLATES.iter().find(|t| t.0 == name).unwrap().2;
+            let files: BTreeMap<_, _> = entries.iter().copied().collect();
+            assert_eq!(files.len(), entries.len(), "{name} has conflicting destination paths");
+            assert!(files.contains_key("tools/mesh.py"));
+            assert!(files.contains_key("tools/mesh_glb.py"));
+            assert!(files.contains_key("app/_model/view.ts"));
+            assert_eq!(files.contains_key("app/_model/three-view.ts"), has_three);
+            assert_eq!(files.contains_key("rust/renderer/Cargo.toml"), has_rust);
+            let lock: serde_json::Value = serde_json::from_str(files["package-lock.json"]).unwrap();
+            assert_eq!(lock["packages"].get("node_modules/three").is_some(), has_three);
+            let config: serde_json::Value = serde_json::from_str(files["forge.config.json"]).unwrap();
+            let modules = config["build"]["wasm"].as_array().unwrap();
+            assert!(modules.iter().any(|module| module["name"] == "mesh"));
+            assert_eq!(modules.iter().any(|module| module["name"] == "renderer"), has_rust);
+            for module in modules {
+                assert!(files.contains_key(module["manifestPath"].as_str().unwrap()));
+            }
+        }
+    }
 
     #[test]
     fn every_template_scaffolds_a_valid_route_table() {

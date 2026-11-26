@@ -1,8 +1,12 @@
 # Model Lab
 
-An offline-capable procedural model editor built with Next.RS. A dependency-free
-Rust crate generates the actual mesh positions, unit normals, UVs and triangle
-indices. Three.js displays those arrays; it does not generate the editable models.
+Model Lab shares a mesh generator, editor, import controls and GLB exporter
+across three project templates. The `models` template uses Three.js.
+`models-rust` includes a separate Rust/WebGL2 renderer. `models-mixed` includes
+both and offers a **Rendering engine** control to switch with the current model.
+The Rust generator creates indexed positions, unit normals and UVs for all four
+built-in shapes. A Python tool or any producer of version-1 mesh JSON can supply
+the same data to either renderer.
 
 ## Run and build
 
@@ -29,8 +33,7 @@ attachment previews and file-manager previews are different applications.
 For an uncompressed file, set `build.compress` to `false` in `forge.config.json`
 and run the same build command. The default compressed output uses
 `DecompressionStream`, supported by Safari
-16.4 and newer. WebGPU is available in Safari 26; earlier supported browsers use
-WebGL 2. Actual availability also depends on the device and browser settings.
+16.4 and newer. The Three.js path can use WebGPU in Safari 26 or WebGL 2. The Rust path uses WebGL 2. Actual availability also depends on the device and browser settings.
 The viewer catches initialization errors and displays them in the interface.
 
 ## Controls and output
@@ -55,6 +58,36 @@ and 32,768 triangles. Device pixel ratio starts at no more than 1.5 and adapts t
 measured frame time. These are safeguards, not a claim of a particular phone's
 frame rate. Native Rust generation tests and browser verification are separate
 from physical iPhone/iPad performance testing.
+
+## Bring your own geometry
+
+```sh
+python3 tools/mesh.py pawn --segments 32 -o pawn.mesh.json
+python3 tools/mesh.py obj scene.obj -o scene.mesh.json
+```
+
+Use the mesh JSON file input to open either file, then inspect or export it as
+GLB. The file-size limit is 8 MiB. OBJ input must be triangulated. The converter
+preserves supplied UVs and normals, and supplies flat normals and zero UVs for
+missing attributes. File units and orientation should already be Y-up metres.
+For a JS producer, call `validateMesh` directly on Float32Array positions,
+normals and UVs and Uint32Array indices. For a hosted service, call
+`parseMeshJson` on the parsed response body.
+
+For an existing static GLB, install `pygltflib==1.16.5` in a Python virtual
+environment and run `python3 tools/mesh.py glb prop.glb -o prop.mesh.json`.
+It accepts one untransformed root mesh with one triangle primitive, embedded
+data, float32 positions and normals and optional UV0. It imports geometry only.
+For animated, multi-part or textured assets, keep the original GLB for an engine
+that supports those features. See `forge docs --read models` for the limits.
+
+The Rust backend takes validated `MeshData` in `app/_model/rust-renderer.ts`,
+when that file is present. Use `setMesh` when geometry changes and `draw` on
+each rendered frame. The editor reuses the Forge game loop, resize handling and
+adaptive resolution. The Rust crate owns shader source, camera transforms and
+draw modes, while the browser host keeps WebGL object handles. It previews one
+opaque mesh. For textured or animated scenes, use a renderer with those
+facilities. See `forge docs --read models` for example code and supported paths.
 
 ## Rust and browser boundary
 
@@ -96,7 +129,7 @@ passed across the ABI.
 finite attributes, normal lengths and triangle indices. It takes a fresh memory
 view after each generation and copies the arrays immediately, because WASM memory
 growth can detach old views. Embedded data URLs are decoded directly instead of
-being fetched. No generated wasm-bindgen glue or host imports are required.
+being fetched. The mesh generator has no host imports. The optional renderer has its own two-function browser interface.
 
 The Rust implementation uses analytic primitive surfaces and seeded continuous
 trigonometric deformation. It is a compact starting point for procedural modeling,

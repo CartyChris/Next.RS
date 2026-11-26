@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Badge, Button, Card, CardContent, Checkbox, Container, Heading, PageHeader, Row, Select, Slider, Stack, Stat, Text, TextInput } from "forge:ui";
 import type { MeshKind } from "forge:mesh";
-import { createModelView, initialParameters } from "./_model/view";
-import type { ModelParameters, ModelStats, ModelView } from "./_model/view";
+import { parseMeshJson } from "forge:mesh";
+import { createModelView, canSelectRenderer } from "./_model/view";
+import { initialParameters } from "./_model/model";
+import type { ModelParameters, ModelSource, ModelStats, ModelView } from "./_model/model";
 
 export const ssr = false;
 
@@ -20,13 +22,17 @@ function errorMessage(error: unknown): string {
 export default function ModelLab() {
   const surface = useRef<HTMLDivElement>(null);
   const view = useRef<ModelView | null>(null);
+  const importRevision = useRef(0);
+  const source = useRef<ModelSource>({ kind: "procedural", parameters: initialParameters });
+  const [engine, setEngine] = useState<"rust" | "three">(() =>
+    canSelectRenderer && typeof location !== "undefined" && new URLSearchParams(location.search).get("renderer") === "rust" ? "rust" : "three");
   const [parameters, setParameters] = useState<ModelParameters>(initialParameters);
   const [stats, setStats] = useState<ModelStats | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("Loading the Rust generator and graphics renderer…");
   const [wireframe, setWireframe] = useState(false);
   const [normals, setNormals] = useState(false);
-  const [paused, setPaused] = useState(false);
+  const [paused, setPaused] = useState(() => typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -34,23 +40,29 @@ export default function ModelLab() {
     const container = surface.current;
     if (!container) return;
     const controller = new AbortController();
-    const initiallyPaused = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    setPaused(initiallyPaused);
+    setStatus("loading");
+    setMessage("Loading the model and graphics renderer…");
+    setStats(null);
     const fail = (error: Error) => {
       if (controller.signal.aborted) return;
+      importRevision.current++;
+      view.current = null;
       setStatus("error");
       setMessage(`${error.message} Try reloading, or open the page in a browser with WebAssembly and WebGL 2 enabled.`);
     };
-    createModelView(container, { signal: controller.signal, paused: initiallyPaused, onStats: setStats, onError: fail })
+    createModelView(container, {
+      signal: controller.signal, paused, wireframe, normals, source: source.current, engine,
+      onStats: setStats, onError: fail,
+    })
       .then((created) => {
         if (controller.signal.aborted) { created.dispose(); return; }
         view.current = created;
         setStatus("ready");
-        setMessage("Model ready");
+        setMessage(source.current.kind === "import" ? `Imported ${source.current.filename}` : "Model ready");
       })
       .catch((error: unknown) => { if (!controller.signal.aborted) fail(new Error(errorMessage(error))); });
-    return () => { controller.abort(); view.current?.dispose(); view.current = null; };
-  }, []);
+    return () => { importRevision.current++; controller.abort(); view.current?.dispose(); view.current = null; };
+  }, [engine]);
 
   const ready = status === "ready";
   const chooseKind = (kind: MeshKind) => {
@@ -62,11 +74,30 @@ export default function ModelLab() {
   };
   const generate = () => {
     if (!view.current || !ready) return;
+    importRevision.current++;
     try {
       view.current.generate(parameters);
+      source.current = { kind: "procedural", parameters: { ...parameters } };
       setNotice(null);
       setMessage("Model ready");
     } catch (error) { setNotice(errorMessage(error)); }
+  };
+  const importFile = async (file?: File) => {
+    const currentView = view.current;
+    if (!currentView || !file || !ready) return;
+    const revision = ++importRevision.current;
+    try {
+      if (file.size > 8 * 1024 * 1024) throw new Error("Choose a mesh JSON file of 8 MiB or less.");
+      const json = await file.text();
+      if (currentView !== view.current || revision !== importRevision.current) return;
+      const mesh = parseMeshJson(JSON.parse(json));
+      currentView.importMesh(mesh, file.name);
+      source.current = { kind: "import", mesh, filename: file.name };
+      setNotice(null);
+      setMessage(`Imported ${file.name}`);
+    } catch (error) {
+      if (currentView === view.current && revision === importRevision.current) setNotice(`Import failed. ${errorMessage(error)}`);
+    }
   };
   const exportModel = async () => {
     if (!view.current || !ready) return;
@@ -133,8 +164,30 @@ export default function ModelLab() {
               <Slider id="model-scale" label="Scale" min={0.25} max={3} step={0.05} value={parameters.scale} showValue={(value) => `${value.toFixed(2)} m`}
                 disabled={!ready} onChange={(event) => setParameters({ ...parameters, scale: event.target.valueAsNumber })} />
               <Button id="model-regenerate" fullWidth disabled={!ready || exporting} onClick={generate}>Generate model</Button>
+              <TextInput id="model-import" type="file" label="Import mesh JSON" accept=".json,application/json"
+                description="Open an indexed mesh from Python or another tool. Up to 8 MiB." disabled={!ready}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  void importFile(file);
+                }} />
               <div className="model-inspection">
                 <Heading level={2} size="sm">Inspect</Heading>
+                {canSelectRenderer && <Select id="model-engine" label="Rendering engine"
+                  description="Compare the current mesh in either renderer."
+                  value={engine}
+                  onChange={(event) => {
+                    const next = event.target.value === "rust" ? "rust" : "three";
+                    const url = new URL(location.href);
+                    if (next === "rust") url.searchParams.set("renderer", "rust");
+                    else url.searchParams.delete("renderer");
+                    // Local file URLs may restrict History API writes.
+                    try { history.replaceState(history.state, "", url); }
+                    catch (error) { if (!(error instanceof DOMException && error.name === "SecurityError")) throw error; }
+                    setEngine(next);
+                  }}>
+                  <option value="three">Three.js</option><option value="rust">Rust WebGL 2</option>
+                </Select>}
                 <Checkbox id="model-wireframe" label="Wireframe" checked={wireframe} disabled={!ready}
                   onChange={(event) => { setWireframe(event.target.checked); view.current?.setWireframe(event.target.checked); }} />
                 <Checkbox id="model-normals" label="Surface normals" checked={normals} disabled={!ready}
@@ -150,13 +203,13 @@ export default function ModelLab() {
       <div className="model-statistics" aria-label="Model statistics">
         <Stat label="Vertices" value={<span id="model-vertices">{stats?.vertices.toLocaleString() ?? "—"}</span>} />
         <Stat label="Triangles" value={<span id="model-triangles">{stats?.triangles.toLocaleString() ?? "—"}</span>} />
-        <Stat label="Generated in" value={<span id="model-generation-ms">{stats ? `${stats.generationMs.toFixed(1)} ms` : "—"}</span>} />
-        <Stat label="Renderer" value={<span id="model-renderer">{stats ? (stats.backend === "webgpu" ? "WebGPU" : "WebGL 2") : "—"}</span>} />
+        <Stat label="Generated in" value={<span id="model-generation-ms">{stats?.generationMs != null ? `${stats.generationMs.toFixed(1)} ms` : "—"}</span>} />
+        <Stat label="Renderer" value={<span id="model-renderer">{stats ? ({ webgpu: "WebGPU", webgl: "WebGL 2", "rust-webgl2": "Rust · WebGL 2" })[stats.backend] : "—"}</span>} />
       </div>
       <Row justify="between" className="model-status-row">
-        <Text size="xs" tone="muted"><span id="model-memory">{stats ? `${(stats.memoryBytes / 1048576).toFixed(2)} MiB WASM` : ""}</span>{stats ? ` · ${extent} m` : ""}</Text>
+        <Text size="xs" tone="muted"><span id="model-memory">{stats ? `${(stats.memoryBytes / 1048576).toFixed(2)} MiB generator memory` : ""}</span>{stats ? ` · ${extent} m` : ""}</Text>
       </Row>
-      {notice && <Alert live="polite">{notice}</Alert>}
+      {notice && <Alert id="model-notice" live="polite">{notice}</Alert>}
       {stats?.fallbackReason && <Text size="xs" tone="muted" className="model-backend-note">{stats.fallbackReason}</Text>}
     </Container>
   );

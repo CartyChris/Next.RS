@@ -31,7 +31,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("architecture", "How the build, runtime and server work", include_str!("../docs/ARCHITECTURE.md")),
     (
         "models",
-        "Rust/WASM procedural meshes, single-file models, WebGPU fallback and mobile controls",
+        "Rust/WASM and Three.js renderers, Python/OBJ meshes, offline models and mobile controls",
         include_str!("../docs/MODELS.md"),
     ),
 ];
@@ -654,7 +654,7 @@ const PROMPTS: &[(&str, &str, &str)] = &[
     (
         "forge_build_game",
         "Plan and build a game with Next.RS",
-        "Build this game with Next.RS: {idea}\n\nWork in this order:\n1. Read the `agents` and `models` docs, then search for the required forge:game APIs and single-html behavior.\n2. Start from `three` for a 3D game, `models` for Rust-generated procedural meshes, or `vanilla` for 2D canvas. Models require Cargo and the wasm32-unknown-unknown target; use npm ci for locked example dependencies.\n3. Use a fixed-step loop, input, independent joystick/actionButton controls, gamepad and adaptiveQuality. Dispose controls and renderer resources on unmount.\n4. For Rust geometry, configure build.wasm and import forge:wasm/<name> with forge:mesh. Keep existing GLSL/EffectComposer games on WebGL; use createRenderer fallback for compatible materials.\n5. Put game UI in forge:ui HUD slots and dialogs; save progress with forge:store.\n6. Run forge_check and type checks, build single-html, and verify real offline rendering and touch behavior in Chromium and WebKit. Report physical-device and hardware-WebGPU checks separately.",
+        "Build this game with Next.RS: {idea}\n\nWork in this order:\n1. Read the `agents` and `models` docs, then search for the required forge:game APIs and single-html behavior.\n2. Start from `three` for a Three.js game, `models` for the Three.js model editor, `models-rust` for an independent Rust/WebGL2 renderer, `models-mixed` for both, or `vanilla` for 2D canvas. The model editors accept procedural Rust meshes, JSON or triangulated OBJ via the Python converter. Models require Cargo and the wasm32-unknown-unknown target; use npm ci for locked example dependencies.\n3. Use a fixed-step loop, input, independent joystick/actionButton controls, gamepad and adaptiveQuality. Dispose controls and renderer resources on unmount.\n4. For Rust geometry, configure build.wasm and import forge:wasm/<name> with forge:mesh. Keep existing GLSL/EffectComposer games on WebGL; use createRenderer fallback for compatible materials.\n5. Put game UI in forge:ui HUD slots and dialogs; save progress with forge:store.\n6. Run forge_check and type checks, build single-html, and verify real offline rendering and touch behavior in Chromium and WebKit. Report physical-device and hardware-WebGPU checks separately.",
     ),
 ];
 

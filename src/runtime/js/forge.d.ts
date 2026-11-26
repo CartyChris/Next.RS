@@ -467,6 +467,10 @@ declare module "forge:mesh" {
   }
   /** Validates attributes/topology and calculates bounds. Does not copy the arrays. */
   export function validateMesh(mesh: MeshAttributes): MeshData;
+  /** Decode version-1 JSON arrays into validated, owned geometry. */
+  export function parseMeshJson(value: unknown): MeshData;
+  /** Read a bounded WASM binary for adapters supplying their own browser imports. */
+  export function readWasm(source: string | URL | ArrayBuffer | Uint8Array, signal?: AbortSignal): Promise<ArrayBuffer | Uint8Array<ArrayBuffer>>;
   /** Loads the Rust mesh ABI v1. Embedded WASM data URLs require no network. */
   export function loadMeshGenerator(source: string | URL | ArrayBuffer | Uint8Array, options?: { signal?: AbortSignal }): Promise<MeshGenerator>;
 }

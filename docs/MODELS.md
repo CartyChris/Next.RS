@@ -1,10 +1,19 @@
 # Rust models, mobile input and browser rendering
 
-Next.RS can compile Rust into browser WebAssembly, generate procedural meshes and
-ship the viewer as one offline HTML file. Rust calculates vertices, normals, UVs
-and triangle indices. Three.js turns those arrays into GPU geometry and presents
-it through WebGPU or WebGL2. The Rust source is compiled during the build; the
-browser receives the resulting executable module, not Rust source text.
+Next.RS can compile independent Rust geometry and rendering modules and embed
+them alongside browser code in one offline HTML file. Choose the renderer,
+geometry source and deployment target separately.
+
+| Template | Browser rendering | Package contents |
+|---|---|---|
+| `models` | Three.js using WebGPU or WebGL2 | Three.js, mesh WASM, shared editor |
+| `models-rust` | Rust/WASM driving WebGL2 | Mesh WASM, renderer WASM, WebGL2 adapter and shared editor. No Three.js npm dependency |
+| `models-mixed` | Switch between Three.js and Rust in the editor | Both rendering implementations in one download. Select Rust with `?renderer=rust`; `?renderer=webgl` forces Three's WebGL2 path |
+
+All profiles accept the built-in sphere, torus, seeded rock and terrain, and
+versioned mesh JSON. Changing engines in the mixed editor reframes the current
+geometry and retains the active inspection settings. Different materials,
+cameras and lighting can produce different images of the same mesh.
 
 ## Start with the models template
 
@@ -35,6 +44,122 @@ orbit/pinch controls and binary glTF (`.glb`) export.
 The source is in `examples/model-lab`. Its Rust crate has no third-party Rust
 dependencies; its npm dependencies are locked. Normal Next.RS applications that
 do not configure Rust modules still use the existing build toolchain.
+
+## Render a mesh with Rust and WebGL2
+
+Start with `forge new lab --template models-rust`, then `cd lab && npm ci`.
+In this project `app/_model/rust-renderer.ts` is a reusable canvas adapter.
+A game can call it directly, independent of the React editor and its generators:
+
+```ts
+import { createRustRenderer } from "./_model/rust-renderer";
+import { validateMesh } from "forge:mesh";
+
+const stop = new AbortController();
+const renderer = await createRustRenderer(canvas, stop.signal);
+const mesh = validateMesh({ positions, normals, uvs, indices });
+renderer.setMesh(mesh, [0.6, 0.4, 0.2]); // linear RGB
+renderer.resize(800, 600);              // drawing-buffer pixels
+renderer.draw(0, false, false);         // rotation (radians), wireframe, normals
+// In the game's update/input path: renderer.orbit(dx, dy) or renderer.zoom(factor).
+// On unmount:
+stop.abort();
+```
+
+This API expects a fresh canvas and validated indexed triangles. The optional
+renderer crate (`rust/renderer`) owns the orbit camera, projection, shaders,
+triangle-to-line expansion, and draw parameters. Each canvas gets one WASM
+instance. Two synchronous imports connect it to the browser. `webgl2.program`
+compiles and links the Rust-supplied shaders. `webgl2.present` binds browser GPU
+objects, uploads uniforms and submits the draw. The host uploads mesh buffers
+when geometry changes. The geometry creator and renderer have separate memories
+and lifetimes. The mesh ABI stays at version 1.
+
+The Rust preview draws one opaque lit mesh, its wireframe, or its normal colors.
+It consumes positions, normals and triangle indices. The editor retains UVs for
+export. The Three.js route remains available for scene graphs, PBR materials,
+textures and richer effects. A project can use the Rust adapter on its own canvas
+beside a second renderer and share the same validated `MeshData` on the CPU.
+Each graphics context needs its own GPU buffers. The mixed editor runs one
+active renderer at a time.
+
+## Use Python, JS, asset tools or a full-stack producer
+
+```sh
+python3 tools/mesh.py pawn --segments 32 -o pawn.mesh.json
+python3 tools/mesh.py obj scene.obj -o scene.mesh.json
+```
+
+Open the JSON in any Model Lab. The Python commands above need only the standard
+library. The editor also accepts JSON from an independent tool or service.
+For example, this triangle is valid input:
+
+```json
+{"version":1,"positions":[0,0,0,1,0,0,0,1,0],"normals":[0,0,1,0,0,1,0,0,1],"uvs":[0,0,1,0,0,1],"indices":[0,1,2]}
+```
+
+| Authoring path | Connection to the renderer |
+|---|---|
+| Custom Rust | Implement mesh ABI v1, configure `build.wasm` and use `loadMeshGenerator`. |
+| JS/TS game logic | Supply typed arrays to `validateMesh`. Reuse its result for Rust, Three.js and GLB export. |
+| Python, NumPy or an offline simulator | Write JSON v1. Coordinates use Y-up metres. The file input caps each upload at 8 MiB. |
+| Blender, CAD or asset-generation tools | Export a static, triangulated OBJ in Y-up metres and convert with `tools/mesh.py obj`. OBJ material libraries, textures, rigs and animation have no field in this contract. |
+| Hosted backend | Fetch mesh JSON from a same-origin API and pass the parsed body to `parseMeshJson`. Run Python in a separate service or asset build step. The Next.RS server runtime executes JS route handlers in QuickJS. |
+
+To iterate offline, run `forge dev --target single-html`. For a standalone
+artifact use `forge build --target single-html`; for static hosting use
+`forge build --target static`. For live API routes or multiplayer sockets use
+`forge build --target server && forge start`. Hosted builds fetch local hashed
+WASM assets. The portable artifact embeds both module bytes and shader sources
+and can open a user-selected JSON file without network access.
+
+### Bring a GLB from another tool
+
+An optional Python adapter accepts the same static GLB layout that this editor
+exports. It extracts a single mesh with one triangle primitive, float32
+positions and normals, and optional UV0. Apply node transforms before export.
+There must be one scene with one root mesh node, embedded binary data, no
+external URIs, skins, animations, morphs or extensions. Output contains
+geometry only. Texture images and PBR materials stay in the original GLB.
+The converter bounds input and output to 8 MiB each, metadata to 256 KiB, and
+geometry to 100,000 vertices and 100,000 triangles.
+
+```sh
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install pygltflib==1.16.5
+python tools/mesh.py glb prop.glb -o prop.mesh.json
+```
+
+This is also an interchange route for generated assets. For example, Tripo can
+supply a GLB. Check its actual scene against the subset above or bake a static
+triangulated OBJ in a DCC tool. Textured or animated assets can instead stay in
+their original GLB for a Three.js game using GLTFLoader. No credentials or
+service calls are involved in Model Lab. [Tripo output format](https://developers.tripo3d.ai/en/docs/quick-start)
+and [Three.js GLTFLoader](https://threejs.org/docs/pages/GLTFLoader.html).
+
+## Why the prototype uses direct WebGL2 bindings
+
+| Option | GPU paths and Safari implications | Build and bundle implications |
+|---|---|---|
+| Existing Three.js | WebGPU with WebGL2 fallback. Preserves existing materials, controls and scenes. | Working single-file route. The editor ships the Three.js code that it uses. |
+| Rust + narrow browser imports (implemented) | WebGL2. Runtime checks actual context creation. Works independently of WebGPU availability. | Standard Cargo cdylib and two imported host functions. Uses the existing URL/embedded-byte path; no generated binding step. |
+| `web-sys` + `wasm-bindgen` | Typed WebGL2 browser API; WebGPU requires its own pipeline. | Feature-gated bindings can be small. Package the matching generated JS and WASM and initialize from embedded bytes; current Forge does not produce the glue automatically. |
+| `glow` or `three-d` | `glow` shares GL calls between native and WebGL; `three-d` adds cameras, rendering and materials on GL/WebGL2. | Useful when sharing a native GL renderer or needing scene facilities. Their browser bindings and chosen features must be linked, packaged and measured. |
+| `wgpu` | Browser WebGPU, optional WebGL2/GLES backend, plus native graphics APIs. Select and exercise both backends explicitly. | Strong candidate for a shared native/browser game renderer. Wider feature surface and binding integration; measure the linked binary and glue for the chosen scene before selecting a size budget. |
+
+WebGL2 was enabled by default in Safari 15. Safari 26 introduced WebGPU on
+iOS. WebGPU also requires a secure context and a usable adapter. Browser API
+availability alone does not establish that a complete build works on a given
+phone. Compare the byte size of the actual generated HTML for each profile;
+include shared UI, loader, modules and editor in every measurement.
+
+- [Three.js WebGPURenderer](https://threejs.org/docs/pages/WebGPURenderer.html)
+- [wasm-bindgen WebGL example](https://wasm-bindgen.github.io/wasm-bindgen/examples/webgl.html)
+- [Initializing wasm-bindgen without a bundler](https://wasm-bindgen.github.io/wasm-bindgen/examples/without-a-bundler.html)
+- [glow](https://github.com/grovesNL/glow) and [three-d](https://github.com/asny/three-d)
+- [wgpu features and supported backends](https://docs.rs/wgpu/latest/wgpu/)
+- [Khronos WebGL Working Group Safari update](https://www.khronos.org/assets/uploads/developers/presentations/WebGL_WG_Updates.pdf)
+- [WebGPU secure-context requirement](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API)
 
 ## Configure Rust compilation
 
@@ -283,6 +408,14 @@ automation is engine coverage, not physical iPhone performance or thermal
 testing. Hardware WebGPU coverage is reported separately from the WebGL2 path;
 a missing hardware adapter is never counted as a WebGPU render pass.
 
+For a physical-device check, record the iPhone model, iOS build and Safari version.
+Serve the built HTML over HTTPS, select each available renderer, and note the
+backend shown. Try maximum-detail terrain, a two-finger pinch, both orientations,
+background/resume, a Python mesh import and GLB export. For performance numbers,
+record frame-time percentiles and the adaptive drawing-buffer resolution over a
+stated interval, including sustained use. A successful Linux WebKit run does
+not supply these device measurements.
+
 ## Verify changes
 
 ```bash
@@ -293,6 +426,19 @@ npm ci --prefix examples/model-lab
 node --test tests/js/*.test.mjs
 cargo build --locked
 node tests/browser/models.mjs target/debug/forge
+```
+
+To exercise the new renderer crate and both new templates:
+
+```sh
+cargo test --locked --manifest-path examples/model-lab/rust/renderer/Cargo.toml
+node --test examples/model-lab/tools/mesh.test.mjs
+for profile in models models-rust models-mixed; do
+  for engine in chromium webkit; do
+    FORGE_MODELS_TEMPLATE="$profile" FORGE_MODELS_BROWSER="$engine" \
+      node tests/browser/models.mjs target/debug/forge || exit 1
+  done
+done
 ```
 
 Use the already installed Playwright package and Chromium/WebKit runtimes. The
