@@ -1,6 +1,6 @@
 import type { MeshAttributes } from "forge:mesh";
 
-interface GlbOptions {
+export interface GlbOptions {
   name: string;
   extras: Record<string, string | number>;
   /** Linear RGB, matching Three's material.color storage. */

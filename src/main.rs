@@ -211,7 +211,7 @@ async fn run(cli: Cli) -> Result<()> {
             if template == "vanilla" {
                 println!("(The vanilla template has no npm dependencies; `npm install` is optional.)");
             }
-            if template == "models" {
+            if matches!(template.as_str(), "models" | "models-rust" | "models-mixed") {
                 println!(
                     "Rust models require Cargo and `rustup target add wasm32-unknown-unknown`. Use `npm ci` for the locked example dependencies."
                 );

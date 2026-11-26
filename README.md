@@ -78,7 +78,7 @@ cargo install --git https://github.com/CartyChris/Next.RS
 ```
 
 ```bash
-forge new my-app --template starter   # or: react, jsx, vanilla, three, models, ai, pixel, arena
+forge new my-app --template starter   # or: react, jsx, vanilla, three, models, models-rust, models-mixed, ai, pixel, arena
 ```
 
 ```bash
@@ -89,11 +89,12 @@ cd my-app && npm install && forge dev
 
 ## Rust-generated 3D models in one HTML file
 
-The `models` template compiles a dependency-free Rust mesh generator to real
-WebAssembly. Rust generates the positions, normals, UVs and indices for spheres,
-tori, seeded rocks and terrain. Three.js displays the result, with WebGPU when
-available and a WebGL2 fallback. The editor includes orbit/pinch controls,
-wireframe/normal inspection, adjustable geometry and GLB export.
+Choose `models` for the Three.js editor (WebGPU with WebGL2 fallback),
+`models-rust` for a Rust/WASM WebGL2 editor without Three.js, or `models-mixed`
+to switch renderers on the same geometry. All three run the same Rust generator,
+open mesh JSON from Python or other producers, and export binary glTF.
+The standalone HTML embeds its dependencies. The same projects also build for
+static hosting or a Next.RS server.
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -207,6 +208,8 @@ An agent should be able to build with a framework it has never seen. Next.RS car
 | [`vanilla`](examples/vanilla) | no framework, zero dependencies: `render()` + `mount()`, loaders, API |
 | [`three`](examples/three-game) | three.js game: fixed-step loop, input, GLSL imports; 145 kB single file |
 | [`models`](examples/model-lab) | **Model Lab**: Rust/WASM procedural models, WebGPU/WebGL2 viewer, touch orbit, wireframe/normals and GLB export in one offline file |
+| `models-rust` | Same editor with a Rust/WASM renderer and a small WebGL2 browser adapter |
+| `models-mixed` | Switch between the Three.js and Rust backends while keeping the current model |
 | [`pixel`](examples/pixel) | **Pixel Pad**: pixel-art editor in one 90 kB file that saves itself, imports dropped images, exports PNG |
 | [`ai`](examples/ai-chat) | streaming chat UI; proxies any OpenAI-compatible API (OpenAI, Ollama, LM Studio, vLLM, …) or echoes offline |
 | [`arena`](examples/arena) | **Forge Arena**: multiplayer socket rooms, neural bots trained in a worker, SSR lobby, 257 kB offline build |

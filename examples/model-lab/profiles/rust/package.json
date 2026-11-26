@@ -1,0 +1,22 @@
+{
+  "name": "forge-model-lab-rust",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "forge dev",
+    "build": "forge build",
+    "start": "forge start",
+    "offline": "forge build --target single-html",
+    "typecheck": "tsc",
+    "test:rust": "cargo test --locked --manifest-path rust/mesh/Cargo.toml && cargo test --locked --manifest-path rust/renderer/Cargo.toml"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.9.0"
+  }
+}

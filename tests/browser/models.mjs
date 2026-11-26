@@ -2,6 +2,8 @@
 // Requires npm ci in examples/model-lab, Rust's wasm32-unknown-unknown target,
 // and the installed Playwright on NODE_PATH. Do not install test tools locally.
 // FORGE_MODELS_BROWSER=webkit selects WebKit. Linux WebKit is not an iPhone.
+// FORGE_MODELS_TEMPLATE selects models, models-rust or models-mixed.
+// FORGE_MODELS_EXAMPLE reuses an already scaffolded, installed project.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -20,13 +22,22 @@ const engine = process.env.FORGE_MODELS_BROWSER ?? "chromium";
 assert.ok(["chromium", "webkit"].includes(engine), `Unsupported browser: ${engine}`);
 const root = resolve(import.meta.dirname, "../..");
 const forge = resolve(process.argv[2] ?? join(root, "target/debug/forge"));
-const example = join(root, "examples/model-lab");
-const dist = join(example, "dist");
-const artifacts = resolve(process.env.FORGE_BROWSER_ARTIFACTS ?? join(root, ".forge/browser-models", engine));
-await mkdir(artifacts, { recursive: true });
+const template = process.env.FORGE_MODELS_TEMPLATE ?? "models";
+assert.ok(["models", "models-rust", "models-mixed"].includes(template), `Unsupported template: ${template}`);
 const scratch = await mkdtemp(join(tmpdir(), "forge-model-browser-"));
+const scaffold = !process.env.FORGE_MODELS_EXAMPLE && template !== "models";
+const example = resolve(process.env.FORGE_MODELS_EXAMPLE ?? (scaffold ? join(scratch, template) : join(root, "examples/model-lab")));
+const dist = join(example, "dist");
+const artifacts = resolve(process.env.FORGE_BROWSER_ARTIFACTS ?? join(root, ".forge/browser-models", template, engine));
+await mkdir(artifacts, { recursive: true });
 const results = [];
 let browser;
+
+function renderUrl(url) {
+  const address = new URL(url);
+  if (template === "models-mixed") address.searchParams.set("renderer", "rust");
+  return address.href;
+}
 
 async function check(name, run) {
   const started = performance.now();
@@ -88,7 +99,9 @@ async function ready(page, url) {
   }));
   assert.ok(dimensions.width > 0 && dimensions.height > 0, "the renderer has a nonempty backing buffer");
   assert.ok(dimensions.cssWidth > 0 && dimensions.cssHeight > 0, "the canvas is visible");
-  assert.ok(["webgl", "webgpu"].includes(dimensions.renderer), `unknown renderer ${dimensions.renderer}`);
+  const rustExpected = template === "models-rust" || (template === "models-mixed" && new URL(url).searchParams.get("renderer") === "rust");
+  const allowed = rustExpected ? ["rust-webgl2"] : ["webgl", "webgpu"];
+  assert.ok(allowed.includes(dimensions.renderer), `expected ${allowed.join(" or ")}, got ${dimensions.renderer}`);
   return dimensions;
 }
 
@@ -195,7 +208,9 @@ async function exportedModel(page, name) {
   assert.equal(await download.failure(), null);
   const bytes = await readFile(await download.path());
   const geometry = inspectGlb(bytes);
-  const requireExample = createRequire(join(example, "package.json"));
+  // Independent reference reader in the test harness. The Rust-only application
+  // builds without Three.js anywhere in its dependency tree.
+  const requireExample = createRequire(join(root, "examples/model-lab/package.json"));
   const { GLTFLoader } = await import(pathToFileURL(requireExample.resolve("three/addons/loaders/GLTFLoader.js")).href);
   const imported = await new GLTFLoader().parseAsync(Uint8Array.from(bytes).buffer, "");
   const meshes = [];
@@ -226,7 +241,12 @@ async function lifecycleCheck(page, selector) {
       await new Promise((resolve) => setTimeout(resolve, 120));
       const whileHidden = read();
       hidden = false; document.dispatchEvent(new Event("visibilitychange"));
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      // On a software renderer the first visible frame may take longer than one
+      // timer window. A broken resume still fails at the bounded deadline.
+      const deadline = performance.now() + 5000;
+      while (read() === whileHidden && performance.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       return { before, whileHidden, resumed: read() };
     } finally {
       if (original) Object.defineProperty(document, "hidden", original);
@@ -361,14 +381,15 @@ async function hostedModel() {
       const wasmResponses = [];
       let csp;
       page.on("response", (response) => {
-        if (response.url() === `${origin}/`) csp = response.headers()["content-security-policy"];
+        if (response.url() === renderUrl(`${origin}/`)) csp = response.headers()["content-security-policy"];
         if (/\.wasm(?:[?#]|$)/i.test(response.url())) wasmResponses.push({
           url: response.url(), status: response.status(), contentType: response.headers()["content-type"],
         });
       });
-      const dimensions = await ready(page, `${origin}/`);
+      const dimensions = await ready(page, renderUrl(`${origin}/`));
       assert.ok(csp?.includes("'wasm-unsafe-eval'"), "default CSP explicitly permits WASM compilation");
-      assert.ok(wasmResponses.length >= 1, "hosted loader fetched a separate compiled WASM asset");
+      assert.equal(new Set(wasmResponses.map((response) => response.url)).size, template === "models" ? 1 : 2,
+        "hosted renderer loads the expected number of distinct WASM assets");
       assert.ok(wasmResponses.every((response) => response.status === 200 && response.contentType?.startsWith("application/wasm") && new URL(response.url).origin === origin),
         `compiled WASM is served locally with the correct MIME type: ${JSON.stringify(wasmResponses)}`);
       await pause(page);
@@ -388,12 +409,23 @@ async function desktopModel(url) {
     const dimensions = await ready(page, url);
     await pause(page);
     const initial = await canvasImage(page, "desktop-torus.png");
+    const box = await page.locator("#model-canvas").boundingBox();
+    const x = box.x + box.width * 0.5, y = box.y + box.height * 0.5;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 60, y + 20, { steps: 8 });
+    await page.mouse.up();
+    const orbited = await canvasImage(page, "desktop-orbit.png");
+    assert.notEqual(initial.hash, orbited.hash, "dragging orbits the paused torus");
+    await page.locator("#model-reset").click();
     await page.screenshot({ path: join(artifacts, "desktop-page.png"), fullPage: true });
-    const geometries = {};
+    const geometries = {}, images = {};
     for (const kind of ["sphere", "torus", "rock", "terrain"]) {
       await generate(page, kind, 17);
       geometries[kind] = await exportedModel(page, `${kind}.glb`);
+      images[kind] = await canvasImage(page, `shape-${kind}.png`);
     }
+    assert.equal(new Set(Object.values(images).map((image) => image.hash)).size, 4, "the four models have distinct pixels");
     const terrain = await canvasImage(page, "desktop-terrain.png");
     assert.notEqual(initial.hash, terrain.hash, "changing model kind changes rendered pixels");
     await generate(page, "rock", 100);
@@ -415,6 +447,10 @@ async function desktopModel(url) {
     await page.waitForFunction((previous) => Number(document.querySelector("#model-canvas").dataset.modelRevision) > previous, revision);
     assert.ok((await exportedModel(page, "sphere-after-empty-seed.glb")).vertices > 3, "unseeded generation recovers from an empty seed");
     const solid = await canvasImage(page, "desktop-solid.png");
+    await page.locator("#model-normals").check();
+    const normals = await canvasImage(page, "desktop-normals.png");
+    assert.notEqual(solid.hash, normals.hash, "normal shading changes the rendered surface");
+    await page.locator("#model-normals").uncheck();
     await page.locator("#model-wireframe").check();
     const wireframe = await canvasImage(page, "desktop-wireframe.png");
     assert.notEqual(solid.hash, wireframe.hash, "wireframe changes the rendered surface");
@@ -433,15 +469,15 @@ async function desktopModel(url) {
     await page.locator('#model-status[data-state="ready"]').waitFor();
     assert.deepEqual(errors, [], "navigation during export must not emit uncaught errors");
     assert.deepEqual(requests, [], "offline HTML must make zero HTTP requests");
-    return { dimensions, initial, terrain, geometries, visibility, networkRequests: requests.length };
+    return { dimensions, initial, terrain, images, geometries, visibility, networkRequests: requests.length };
   });
 }
 
 async function mobileModel(url) {
   return withPage({ viewport: { width: 320, height: 820 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true }, async ({ page, errors, requests }) => {
-    const forced = new URL(url); forced.searchParams.set("renderer", "webgl");
+    const forced = new URL(url); forced.searchParams.set("renderer", template === "models" ? "webgl" : "rust");
     const dimensions = await ready(page, forced.href);
-    assert.equal(dimensions.renderer, "webgl", "explicit WebGL selection is honored");
+    assert.equal(dimensions.renderer, template === "models" ? "webgl" : "rust-webgl2", "explicit WebGL selection is honored");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "the UI fits a 320px phone viewport");
     assert.ok(dimensions.width <= Math.ceil(dimensions.cssWidth * 2) + 1, "mobile DPR is bounded");
     await pause(page);
@@ -449,6 +485,34 @@ async function mobileModel(url) {
     await page.evaluate(() => scrollTo(0, 0));
     await page.screenshot({ path: join(artifacts, "mobile-viewport.png") });
     await page.screenshot({ path: join(artifacts, "mobile-page.png"), fullPage: true });
+    if (engine === "chromium") {
+      // Playwright's portable touchscreen API supports taps only. CDP delivers
+      // two real emulated touch contacts to Blink's browser input subsystem.
+      const session = await page.context().newCDPSession(page);
+      await page.locator("#model-canvas").scrollIntoViewIfNeeded();
+      await page.locator("#model-canvas").evaluate((canvas) => {
+        const ids = new Set();
+        window.__pinchContacts = 0;
+        canvas.addEventListener("pointerdown", (event) => {
+          if (event.isTrusted && event.pointerType === "touch") {
+            ids.add(event.pointerId);
+            window.__pinchContacts = Math.max(window.__pinchContacts, ids.size);
+          }
+        });
+        for (const type of ["pointerup", "pointercancel"]) canvas.addEventListener(type, (event) => ids.delete(event.pointerId));
+      });
+      const box = await page.locator("#model-canvas").boundingBox();
+      const x = box.x + box.width / 2, y = box.y + box.height / 2;
+      for (const [event, spread] of [["touchStart", 20], ["touchMove", 34], ["touchMove", 54], ["touchEnd", 0]]) {
+        const points = spread ? [{ x: x - spread, y, id: 1 }, { x: x + spread, y, id: 2 }] : [];
+        await session.send("Input.dispatchTouchEvent", { type: event, touchPoints: points });
+      }
+      await session.detach();
+      assert.equal(await page.evaluate(() => window.__pinchContacts), 2, "two simultaneous browser touch contacts reached the model canvas");
+      const pinched = await canvasImage(page, "mobile-pinch.png");
+      assert.notEqual(before.hash, pinched.hash, "two-finger pinch changes the paused camera");
+      await page.locator("#model-reset").tap();
+    }
     await page.locator("#model-zoom-in").tap();
     await delay(350);
     const after = await canvasImage(page, "mobile-after-zoom.png");
@@ -463,7 +527,7 @@ async function mobileModel(url) {
   });
 }
 
-function corruptWasm(html) {
+function appScript(html) {
   const script = /(<script\b[^>]*\bid="__forge_app"[^>]*>)([\s\S]*?)(<\/script>)/.exec(html);
   assert.ok(script, "single HTML exposes its application script");
   let source = script[2];
@@ -479,25 +543,32 @@ function corruptWasm(html) {
     }
     source = inflateRawSync(bytes).toString("utf8");
   }
+  return { script, source };
+}
+
+function corruptWasm(html, target) {
+  const { script, source: original } = appScript(html);
   let changed = 0;
-  source = source.replace(/\bAGFzbQE[A-Za-z0-9+/]{100,}={0,2}/g, (encoded) => {
+  let source = original.replace(/\bAGFzbQE[A-Za-z0-9+/]{100,}={0,2}/g, (encoded) => {
     const bytes = Buffer.from(encoded, "base64");
     assert.equal(WebAssembly.validate(bytes), true, "the original payload is genuine valid WASM");
+    const mesh = WebAssembly.Module.exports(new WebAssembly.Module(bytes)).some(({ name }) => name === "mesh_abi_version");
+    if (mesh !== (target === "mesh")) return encoded;
     bytes[0] = 1;
     assert.equal(WebAssembly.validate(bytes), false, "the negative fixture has invalid WASM magic");
     changed++;
     return bytes.toString("base64");
   });
-  assert.equal(changed, 1, "corrupt exactly the embedded mesh module, with no module mocks");
+  assert.equal(changed, 1, `corrupt exactly the embedded ${target} module, with no module mocks`);
   source = source.replace(/<\/script/gi, "<\\/script").replace(/<!--/g, "<\\!--");
   return html.slice(0, script.index) + script[1] + source + script[3] + html.slice(script.index + script[0].length);
 }
 
-async function failedInitialization(html) {
-  const path = join(scratch, "invalid-mesh.html");
-  await writeFile(path, corruptWasm(html));
+async function failedInitialization(html, target) {
+  const path = join(scratch, `invalid-${target}.html`);
+  await writeFile(path, corruptWasm(html, target));
   return withPage({}, async ({ page, errors, requests }) => {
-    await page.goto(pathToFileURL(path).href);
+    await page.goto(renderUrl(pathToFileURL(path).href));
     const status = page.locator('#model-status[data-state="error"]');
     await status.waitFor();
     const position = await status.boundingBox();
@@ -508,32 +579,129 @@ async function failedInitialization(html) {
     assert.equal(await page.locator("#model-export").isDisabled(), true);
     assert.deepEqual(errors, [], "invalid WASM is handled instead of becoming an uncaught rejection");
     assert.deepEqual(requests, []);
-    await page.screenshot({ path: join(artifacts, "initialization-error.png"), fullPage: true });
+    await page.screenshot({ path: join(artifacts, `initialization-error-${target}.png`), fullPage: true });
     return { message, networkRequests: requests.length };
   });
 }
 
+async function importPythonMesh(url, backend) {
+  const filename = "pawn.mesh.json";
+  const path = join(scratch, filename);
+  execFileSync("python3", [join(example, "tools/mesh.py"), "pawn", "--segments", "32", "-o", path]);
+  const json = JSON.parse(await readFile(path, "utf8"));
+  return withPage({}, async ({ page, errors, requests }) => {
+    await ready(page, url);
+    await pause(page);
+    const input = page.locator("#model-import");
+    await input.setInputFiles(path);
+    await page.waitForFunction((name) => document.querySelector("#model-status").textContent.includes(name), filename);
+    const imported = await exportedModel(page, `python-pawn-${backend}.glb`);
+    assert.equal(imported.vertices, json.positions.length / 3);
+    assert.equal(imported.triangles, json.indices.length / 3);
+    const positions = [];
+    for (let i = 0; i < json.positions.length; i += 3) {
+      positions.push(json.positions.slice(i, i + 3).map(Math.fround));
+    }
+    assert.equal(imported.geometryHash, createHash("sha256").update(JSON.stringify(positions)).digest("hex"),
+      "round-trip GLB contains the Python producer's exact float32 positions");
+    const pixels = await canvasImage(page, `python-pawn-${backend}.png`);
+    const revision = await page.locator("#model-canvas").getAttribute("data-model-revision");
+    await input.setInputFiles({ name: "bad.mesh.json", mimeType: "application/json", buffer: Buffer.from('{"version":1,"positions":[0]}') });
+    await page.getByText(/^Import failed\./).waitFor();
+    assert.equal(await page.locator("#model-canvas").getAttribute("data-model-revision"), revision, "invalid import preserves the mesh");
+    assert.equal((await exportedModel(page, `python-pawn-after-error-${backend}.glb`)).geometryHash, imported.geometryHash);
+    if (template === "models-mixed" && backend === "rust") {
+      const oldContext = await page.locator("#model-canvas").evaluateHandle((canvas) => canvas.getContext("webgl2"));
+      await page.locator("#model-engine").selectOption("three");
+      await page.locator('#model-canvas:is([data-renderer="webgl"], [data-renderer="webgpu"])[data-mesh-valid="true"]').waitFor();
+      assert.ok(await oldContext.evaluate((gl) => gl.isContextLost()), "switch releases the Rust canvas context");
+      await oldContext.dispose();
+      assert.equal((await exportedModel(page, "python-pawn-switched.glb")).geometryHash, imported.geometryHash);
+      assert.equal(await page.locator("#model-pause").getAttribute("aria-pressed"), "true");
+      await page.locator("#model-engine").selectOption("rust");
+      await page.locator('#model-canvas[data-renderer="rust-webgl2"][data-mesh-valid="true"]').waitFor();
+      assert.equal((await exportedModel(page, "python-pawn-switched-back.glb")).geometryHash, imported.geometryHash);
+    }
+    await generate(page, "rock", 19);
+    assert.deepEqual(errors, []); assert.deepEqual(requests, []);
+    return { imported, pixels, networkRequests: requests.length };
+  });
+}
+
+async function missingWebGL(url) {
+  return withPage({}, async ({ page, errors, requests }) => {
+    await page.addInitScript(() => {
+      const native = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(type, ...options) {
+        return type === "webgl2" ? null : native.call(this, type, ...options);
+      };
+    });
+    await page.goto(url);
+    const status = page.locator('#model-status[data-state="error"]');
+    await status.waitFor();
+    assert.match(await status.textContent(), /WebGL\s*2/i);
+    assert.ok(await page.locator("#model-export").isDisabled());
+    assert.deepEqual(errors, []); assert.deepEqual(requests, []);
+  });
+}
+
+async function loseContext(url) {
+  return withPage({}, async ({ page, errors, requests }) => {
+    await ready(page, url);
+    await page.locator("#model-canvas").evaluate((canvas) => {
+      const loss = canvas.getContext("webgl2").getExtension("WEBGL_lose_context");
+      if (!loss) throw new Error("Context-loss test needs WEBGL_lose_context");
+      loss.loseContext();
+    });
+    const status = page.locator('#model-status[data-state="error"]');
+    await status.waitFor();
+    assert.match(await status.textContent(), /context.*lost/i);
+    assert.ok(await page.locator("#model-regenerate").isDisabled());
+    assert.deepEqual(errors, []); assert.deepEqual(requests, []);
+  });
+}
+
 try {
+  if (scaffold) {
+    execFileSync(forge, ["new", example, "--template", template], { stdio: "inherit" });
+    execFileSync("npm", ["ci", "--no-audit", "--no-fund"], { cwd: example, stdio: "inherit" });
+  }
   const options = engine === "chromium" ? {
     args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
-  } : {};
+  } : process.env.WEBKIT_PATH ? { executablePath: process.env.WEBKIT_PATH } : {};
   browser = await playwright[engine].launch(options);
   await check("browser input, visibility, resize, and actual WebGL fallback", runtimeControls);
   await check("hosted Rust WASM asset, default CSP, and rendered pixels", hostedModel);
   execFileSync(forge, ["build", example, "--target", "single-html"], { stdio: "inherit" });
   assert.deepEqual(await readdir(dist), ["index.html"], "the artifact consists of one HTML file");
   const html = await readFile(join(dist, "index.html"), "utf8");
-  const url = pathToFileURL(join(dist, "index.html")).href;
+  const threeBundled = appScript(html).source.includes("__THREE_DEVTOOLS__");
+  const packages = JSON.parse(await readFile(join(example, "package-lock.json"), "utf8")).packages;
+  assert.equal(threeBundled, template !== "models-rust", "Three runtime registration is present only in Three-capable builds");
+  assert.equal(Object.hasOwn(packages, "node_modules/three"), template !== "models-rust", "Rust-only lockfile excludes Three");
+  const base = pathToFileURL(join(dist, "index.html")).href;
+  const url = renderUrl(base);
   await check("offline Rust models, parameter changes, GLB export, and rendered pixels", () => desktopModel(url));
   await check("mobile WebGL, touch controls, DPR bounds, and orientation changes", () => mobileModel(url));
-  await check("corrupt WASM produces a visible initialization error", () => failedInitialization(html));
+  await check("Python mesh import, GLB round-trip and invalid import", () => importPythonMesh(url, template === "models" ? "three" : "rust"));
+  if (template === "models-mixed") {
+    const threeUrl = new URL(base);
+    threeUrl.searchParams.set("renderer", "webgl");
+    await check("mixed file can render and export the same Python mesh with Three", () => importPythonMesh(threeUrl.href, "three"));
+  }
+  await check("corrupt mesh WASM produces a visible initialization error", () => failedInitialization(html, "mesh"));
+  if (template !== "models") {
+    await check("corrupt renderer WASM produces a visible initialization error", () => failedInitialization(html, "renderer"));
+    await check("unavailable WebGL2 is visible and disables editing", () => missingWebGL(url));
+    await check("context loss stops the Rust viewer", () => loseContext(url));
+  }
 } catch (error) {
   results.push({ name: "build and browser startup", passed: false, error: error.stack ?? String(error) });
   console.error(error);
 } finally {
   await browser?.close();
   await rm(scratch, { recursive: true, force: true });
-  await writeFile(join(artifacts, "results.json"), JSON.stringify({ engine, results }, null, 2) + "\n");
+  await writeFile(join(artifacts, "results.json"), JSON.stringify({ template, engine, browserVersion: browser?.version(), results }, null, 2) + "\n");
 }
 if (!results.length || results.some((result) => !result.passed)) process.exitCode = 1;

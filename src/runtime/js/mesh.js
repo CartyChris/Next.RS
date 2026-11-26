@@ -16,7 +16,8 @@ function abortIfNeeded(signal) {
   if (signal?.aborted) throw signal.reason ?? new DOMException("Mesh loading was cancelled.", "AbortError");
 }
 
-async function readWasm(source, signal) {
+/** Bounded bytes for a custom WASM adapter, including embedded single-HTML modules. */
+export async function readWasm(source, signal) {
   abortIfNeeded(signal);
   if (source instanceof Uint8Array || source instanceof ArrayBuffer) {
     checkSize(source.byteLength);
@@ -135,6 +136,42 @@ export function validateMesh(mesh) {
     }
   }
   return { positions, normals, uvs, indices, vertexCount, triangleCount: indices.length / 3, bounds: { min, max } };
+}
+
+/** Decode the flat, versioned interchange used by offline tools and application APIs. */
+export function parseMeshJson(value) {
+  if (value?.version !== 1) throw new TypeError("Expected mesh JSON version 1.");
+  const { positions, normals, uvs, indices } = value;
+  if (!Array.isArray(positions) || positions.length < 9 || positions.length % 3 !== 0
+      || positions.length > MAX_VERTICES * 3 || !Array.isArray(normals) || normals.length !== positions.length
+      || !Array.isArray(uvs) || uvs.length !== positions.length / 3 * 2
+      || !Array.isArray(indices) || indices.length < 3 || indices.length % 3 !== 0 || indices.length > MAX_INDICES) {
+    throw new RangeError("Mesh JSON attribute or index lengths are invalid.");
+  }
+  // Validate numbers before typed-array conversion can coerce strings, truncate
+  // fractional indices or wrap values outside u32 back into the vertex range.
+  const vertexCount = positions.length / 3;
+  for (const index of indices) {
+    if (!Number.isInteger(index) || index < 0 || index >= vertexCount) throw new RangeError("Invalid mesh JSON index.");
+  }
+  for (const array of [positions, normals, uvs]) {
+    for (const number of array) {
+      if (!Number.isFinite(number)) throw new TypeError("Mesh JSON attributes require finite numbers.");
+    }
+  }
+  const mesh = validateMesh({
+    positions: new Float32Array(positions), normals: new Float32Array(normals),
+    uvs: new Float32Array(uvs), indices: new Uint32Array(indices),
+  });
+  // Rounding in another author's file can leave otherwise valid normals a
+  // little off-unit. Give lighting and glTF export the same unit vectors.
+  for (let i = 0; i < mesh.normals.length; i += 3) {
+    const length = Math.hypot(mesh.normals[i], mesh.normals[i + 1], mesh.normals[i + 2]);
+    mesh.normals[i] /= length;
+    mesh.normals[i + 1] /= length;
+    mesh.normals[i + 2] /= length;
+  }
+  return mesh;
 }
 
 /** Load a Rust ABI-v1 generator. Embedded data URLs are decoded without fetch(). */

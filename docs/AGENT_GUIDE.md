@@ -127,11 +127,22 @@ Loaders run per request on the server target and at build time on the other two.
 
 Start from `three` (3D) or `vanilla` (2D canvas). Make the page client-only (`export const ssr = false`) when it touches WebGL at module scope. Run the simulation in `loop()` from `forge:game` with a fixed step, read `input()`, size the canvas with `fit()`. Put interface over the canvas in `Hud` and `HudSlot` from `forge:ui`; menus are `Dialog`s. Save progress with `usePersistentState`. Multiplayer is a `socket` export in a `route.ts`: every connection to one path shares a worker, so module state is the room state.
 
-For Rust-generated models, start from `models` and read `forge docs --read models`.
-Declare the Cargo manifest in `build.wasm`, import `forge:wasm/<name>`, and use
-`loadMeshGenerator` from `forge:mesh`. Rust generates mesh data; Three.js renders
-it. Use compatible materials for WebGPU fallback; existing GLSL/EffectComposer
-games need their WebGL renderer. On mobile, give joystick and action controls
+Choose the renderer and the mesh producer independently.
+
+| Scaffold | Rendering |
+|---|---|
+| `models` | Three.js WebGPU or WebGL2 |
+| `models-rust` | Rust/WASM and direct WebGL2 browser calls, without Three.js |
+| `models-mixed` | Both in the same artifact, switch with the Renderer control |
+
+All three use `forge:mesh`. Use `loadMeshGenerator` for ABI-v1 Rust generators,
+`validateMesh` for JS/TS typed arrays, or `parseMeshJson` for offline files or
+JSON from a server. To try Python, run `python3 tools/mesh.py pawn -o pawn.mesh.json`
+in a generated project and import the output. The same tool converts triangulated OBJ and, with its optional Python dependency, single-mesh static GLB.
+Read `forge docs --read models` for the renderer API, supported asset features,
+deployment commands and iPhone verification procedure.
+
+On mobile, give joystick and action controls
 independent pointers, poll `gamepad`, and feed rendered-frame times into
 `adaptiveQuality`. Dispose input, geometry and renderers on unmount. Verify the
 actual single HTML with network blocked in Chromium and WebKit; report physical
